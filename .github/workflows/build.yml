@@ -14,18 +14,10 @@ jobs:
       - name: Install dependencies
         run: |
           pip install llama-cpp-python[server] pystray pillow pyinstaller
-      - name: Download model from Hugging Face
-        run: |
-          Invoke-WebRequest -Uri https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -OutFile qwen3-0.6b-q4.gguf
-      - name: Create PyInstaller spec file
-        run: |
-          echo "# -*- mode: python ; coding: utf-8 -*-" > edge_llm_base.spec
-          echo "block_cipher = None" >> edge_llm_base.spec
-          echo "a = Analysis(['edge_llm_base.py'], pathex=[], binaries=[], datas=[('qwen3-0.6b-q4.gguf', '.')], hiddenimports=['llama_cpp.server', 'llama_cpp', 'pystray', 'PIL'], hookspath=[], hooksconfig={}, runtime_hooks=[], excludes=[], win_no_prefer_redirects=False, win_private_assemblies=False, cipher=block_cipher, noarchive=False)" >> edge_llm_base.spec
-          echo "pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)" >> edge_llm_base.spec
-          echo "exe = EXE(pyz, a.scripts, a.binaries, a.zipfiles, a.datas, [], name='edge_llm_base', debug=False, bootloader_ignore_signals=False, strip=False, upx=True, upx_exclude=[], runtime_tmpdir=None, console=False, disable_windowed_traceback=False, argv_emulation=False, target_arch=None, codesign_identity=None, entitlements_file=None)" >> edge_llm_base.spec
       - name: Build PyInstaller executable
-        run: pyinstaller edge_llm_base.spec
+        run: pyinstaller --onefile --windowed --add-data "qwen3-0.6b-q4.gguf;." edge_llm_base.py  # 添加模型文件
+      - name: Download model from Hugging Face
+        run: Invoke-WebRequest -Uri https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -OutFile qwen3-0.6b-q4.gguf
       - name: Install NSIS
         run: choco install nsis -y
       - name: Create NSIS installer script
@@ -35,9 +27,8 @@ jobs:
           echo '!define PRODUCT_PUBLISHER "YourName"' >> installer.nsi
           echo 'SetCompressor lzma' >> installer.nsi
           echo 'Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"' >> installer.nsi
-          echo 'OutFile "EdgeLLMBase_Setup.exe"' >> installer.nsi
+          echo 'OutFile "setup.exe"' >> installer.nsi
           echo 'InstallDir "$PROGRAMFILES\EdgeLLMBase"' >> installer.nsi
-          echo 'RequestExecutionLevel admin' >> installer.nsi
           echo 'ShowInstDetails show' >> installer.nsi
           echo 'Section "MainSection" SEC01' >> installer.nsi
           echo '  SetOutPath "$INSTDIR"' >> installer.nsi
@@ -52,8 +43,6 @@ jobs:
           echo '  WriteUninstaller "$INSTDIR\uninstall.exe"' >> installer.nsi
           echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "DisplayName" "${PRODUCT_NAME}"' >> installer.nsi
           echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "UninstallString" "$INSTDIR\uninstall.exe"' >> installer.nsi
-          echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "DisplayVersion" "${PRODUCT_VERSION}"' >> installer.nsi
-          echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "Publisher" "${PRODUCT_PUBLISHER}"' >> installer.nsi
           echo 'SectionEnd' >> installer.nsi
           echo 'Section Uninstall' >> installer.nsi
           echo '  Delete "$INSTDIR\edge_llm_base.exe"' >> installer.nsi
@@ -71,7 +60,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: EdgeLLMBase_Setup.exe
+          path: setup.exe
 
   build-linux-x86:
     runs-on: ubuntu-latest
@@ -84,70 +73,29 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ruby-full wget ninja-build libappindicator3-1 gir1.2-appindicator3-0.1 libgtk-3-0 libnotify4 libnss3 libxss1 libasound2 libxtst6 xdg-utils
+          # 修复 libasound2 依赖问题
+          sudo apt-get install -y ruby-full wget ninja-build libappindicator3-1 gir1.2-appindicator3-0.1 libasound2t64
           sudo gem install fpm
           pip install llama-cpp-python[server] pystray pillow pyinstaller
+      - name: Build PyInstaller executable
+        run: pyinstaller --onefile --add-data "qwen3-0.6b-q4.gguf:." edge_llm_base.py  # 添加模型文件
       - name: Download model from Hugging Face
         run: wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O qwen3-0.6b-q4.gguf
-      - name: Create PyInstaller spec file
-        run: |
-          echo "# -*- mode: python ; coding: utf-8 -*-" > edge_llm_base.spec
-          echo "block_cipher = None" >> edge_llm_base.spec
-          echo "a = Analysis(['edge_llm_base.py'], pathex=[], binaries=[], datas=[('qwen3-0.6b-q4.gguf', '.')], hiddenimports=['llama_cpp.server', 'llama_cpp', 'pystray', 'PIL'], hookspath=[], hooksconfig={}, runtime_hooks=[], excludes=[], win_no_prefer_redirects=False, win_private_assemblies=False, cipher=block_cipher, noarchive=False)" >> edge_llm_base.spec
-          echo "pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)" >> edge_llm_base.spec
-          echo "exe = EXE(pyz, a.scripts, a.binaries, a.zipfiles, a.datas, [], name='edge_llm_base', debug=False, bootloader_ignore_signals=False, strip=False, upx=True, upx_exclude=[], runtime_tmpdir=None, console=False, disable_windowed_traceback=False, argv_emulation=False, target_arch=None, codesign_identity=None, entitlements_file=None)" >> edge_llm_base.spec
-      - name: Build PyInstaller executable
-        run: pyinstaller edge_llm_base.spec
       - name: Create post-install script for fpm
         run: |
-          echo '#!/bin/bash' > post-install.sh
-          echo '# 设置执行权限' >> post-install.sh
-          echo 'chmod +x /opt/edge-llm-base/edge_llm_base' >> post-install.sh
-          echo '' >> post-install.sh
-          echo '# 创建桌面快捷方式' >> post-install.sh
-          echo 'mkdir -p $HOME/.local/share/applications' >> post-install.sh
-          echo 'cat > $HOME/.local/share/applications/edge-llm-base.desktop << EOF' >> post-install.sh
-          echo '[Desktop Entry]' >> post-install.sh
-          echo 'Name=Edge LLM Base' >> post-install.sh
-          echo 'Exec=/opt/edge-llm-base/edge_llm_base' >> post-install.sh
-          echo 'Icon=application-x-executable' >> post-install.sh
-          echo 'Type=Application' >> post-install.sh
-          echo 'Categories=Utility;' >> post-install.sh
-          echo 'EOF' >> post-install.sh
-          echo '' >> post-install.sh
-          echo 'chmod +x $HOME/.local/share/applications/edge-llm-base.desktop' >> post-install.sh
-          echo '' >> post-install.sh
-          echo '# 创建桌面图标' >> post-install.sh
-          echo 'if [ -d $HOME/Desktop ]; then' >> post-install.sh
-          echo '    cp $HOME/.local/share/applications/edge-llm-base.desktop $HOME/Desktop/' >> post-install.sh
-          echo '    chmod +x $HOME/Desktop/edge-llm-base.desktop' >> post-install.sh
-          echo 'fi' >> post-install.sh
+          echo '#!/bin/sh' > post-install.sh
+          echo 'ln -sf /opt/edge-llm-base/edge_llm_base /usr/local/bin/edge_llm_base' >> post-install.sh
           chmod +x post-install.sh
-      - name: Create pre-uninstall script for fpm
-        run: |
-          echo '#!/bin/bash' > pre-uninstall.sh
-          echo '# 删除桌面快捷方式' >> pre-uninstall.sh
-          echo 'rm -f $HOME/.local/share/applications/edge-llm-base.desktop' >> pre-uninstall.sh
-          echo 'rm -f $HOME/Desktop/edge-llm-base.desktop' >> pre-uninstall.sh
-          chmod +x pre-uninstall.sh
       - name: Build deb package with fpm
         run: |
           mkdir -p deb-root/opt/edge-llm-base
           cp dist/edge_llm_base deb-root/opt/edge-llm-base/
           cp qwen3-0.6b-q4.gguf deb-root/opt/edge-llm-base/
-          fpm -s dir -t deb -n edge-llm-base -v 1.0 \
-            --prefix / -C deb-root \
+          fpm -s dir -t deb -n edge-llm-base -v 1.0 --prefix / -C deb-root \
             --description "Edge LLM Base for Qwen3 with Model" \
             --depends "libappindicator3-1" \
-            --depends "libgtk-3-0" \
-            --depends "libnotify4" \
-            --depends "libnss3" \
-            --depends "libxss1" \
-            --depends "libasound2" \
-            --depends "libxtst6" \
-            --depends "xdg-utils" \
-            --after-install ./post-install.sh \
-            --before-remove ./pre-uninstall.sh
+            --depends "libasound2t64" \  # 修复这里
+            --after-install ./post-install.sh
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -168,73 +116,25 @@ jobs:
             ubuntu:22.04 bash -c "
               set -e
               apt-get update
-              apt-get install -y python3 python3-pip ruby-full wget ninja-build libappindicator3-1 gir1.2-appindicator3-0.1 libgtk-3-0 libnotify4 libnss3 libxss1 libasound2 libxtst6 xdg-utils
+              # 修复 libasound2 依赖问题
+              apt-get install -y python3 python3-pip ruby-full wget ninja-build libappindicator3-1 gir1.2-appindicator3-0.1 libasound2t64
               gem install fpm
               pip install llama-cpp-python[server] pystray pillow pyinstaller --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
-              
-              # Download model
+              pyinstaller --onefile --add-data 'qwen3-0.6b-q4.gguf:.' edge_llm_base.py
               wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O qwen3-0.6b-q4.gguf
               
-              # Create spec file
-              echo '# -*- mode: python ; coding: utf-8 -*-' > edge_llm_base.spec
-              echo 'block_cipher = None' >> edge_llm_base.spec
-              echo 'a = Analysis([\"edge_llm_base.py\"], pathex=[], binaries=[], datas=[(\"qwen3-0.6b-q4.gguf\", \".\")], hiddenimports=[\"llama_cpp.server\", \"llama_cpp\", \"pystray\", \"PIL\"], hookspath=[], hooksconfig={}, runtime_hooks=[], excludes=[], win_no_prefer_redirects=False, win_private_assemblies=False, cipher=block_cipher, noarchive=False)' >> edge_llm_base.spec
-              echo 'pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)' >> edge_llm_base.spec
-              echo 'exe = EXE(pyz, a.scripts, a.binaries, a.zipfiles, a.datas, [], name=\"edge_llm_base\", debug=False, bootloader_ignore_signals=False, strip=False, upx=True, upx_exclude=[], runtime_tmpdir=None, console=False, disable_windowed_traceback=False, argv_emulation=False, target_arch=None, codesign_identity=None, entitlements_file=None)' >> edge_llm_base.spec
-              
-              # Build executable
-              pyinstaller edge_llm_base.spec
-              
-              # Create post-install script
-              echo '#!/bin/bash' > post-install.sh
-              echo '# 设置执行权限' >> post-install.sh
-              echo 'chmod +x /opt/edge-llm-base/edge_llm_base' >> post-install.sh
-              echo '' >> post-install.sh
-              echo '# 创建桌面快捷方式' >> post-install.sh
-              echo 'mkdir -p \$HOME/.local/share/applications' >> post-install.sh
-              echo 'cat > \$HOME/.local/share/applications/edge-llm-base.desktop << EOF' >> post-install.sh
-              echo '[Desktop Entry]' >> post-install.sh
-              echo 'Name=Edge LLM Base' >> post-install.sh
-              echo 'Exec=/opt/edge-llm-base/edge_llm_base' >> post-install.sh
-              echo 'Icon=application-x-executable' >> post-install.sh
-              echo 'Type=Application' >> post-install.sh
-              echo 'Categories=Utility;' >> post-install.sh
-              echo 'EOF' >> post-install.sh
-              echo '' >> post-install.sh
-              echo 'chmod +x \$HOME/.local/share/applications/edge-llm-base.desktop' >> post-install.sh
-              echo '' >> post-install.sh
-              echo '# 创建桌面图标' >> post-install.sh
-              echo 'if [ -d \$HOME/Desktop ]; then' >> post-install.sh
-              echo '    cp \$HOME/.local/share/applications/edge-llm-base.desktop \$HOME/Desktop/' >> post-install.sh
-              echo '    chmod +x \$HOME/Desktop/edge-llm-base.desktop' >> post-install.sh
-              echo 'fi' >> post-install.sh
+              echo '#!/bin/sh' > post-install.sh
+              echo 'ln -sf /opt/edge-llm-base/edge_llm_base /usr/local/bin/edge_llm_base' >> post-install.sh
               chmod +x post-install.sh
-              
-              # Create pre-uninstall script
-              echo '#!/bin/bash' > pre-uninstall.sh
-              echo '# 删除桌面快捷方式' >> pre-uninstall.sh
-              echo 'rm -f \$HOME/.local/share/applications/edge-llm-base.desktop' >> pre-uninstall.sh
-              echo 'rm -f \$HOME/Desktop/edge-llm-base.desktop' >> pre-uninstall.sh
-              chmod +x pre-uninstall.sh
-              
-              # Build deb package
+
               mkdir -p deb-root/opt/edge-llm-base
               cp dist/edge_llm_base deb-root/opt/edge-llm-base/
               cp qwen3-0.6b-q4.gguf deb-root/opt/edge-llm-base/
-              fpm -s dir -t deb -n edge-llm-base -v 1.0 \
-                --prefix / -C deb-root \
-                --architecture arm64 \
-                --description 'Edge LLM Base for Qwen3 with Model' \
+              fpm -s dir -t deb -n edge-llm-base -v 1.0 --prefix / -C deb-root \
+                --architecture arm64 --description 'Edge LLM Base for Qwen3 with Model' \
                 --depends 'libappindicator3-1' \
-                --depends 'libgtk-3-0' \
-                --depends 'libnotify4' \
-                --depends 'libnss3' \
-                --depends 'libxss1' \
-                --depends 'libasound2' \
-                --depends 'libxtst6' \
-                --depends 'xdg-utils' \
-                --after-install ./post-install.sh \
-                --before-remove ./pre-uninstall.sh
+                --depends 'libasound2t64' \  # 修复这里
+                --after-install ./post-install.sh
             "
       - name: Upload artifact
         uses: actions/upload-artifact@v4
