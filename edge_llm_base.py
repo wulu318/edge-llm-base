@@ -1,28 +1,16 @@
 import os
-import sys
 import subprocess
 import threading
 import time
 import pystray
 from pystray import MenuItem as item
 from PIL import Image
-import logging
-
-# 配置日志
-logging.basicConfig(level=logging.INFO, filename="edge_llm_base.log", filemode="w")
-
-def resource_path(relative_path):
-    """ 获取资源文件的真实路径，兼容 PyInstaller """
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
+import sys
 
 # 配置
-MODEL_PATH = resource_path("qwen3-0.6b-q4.gguf")
-PORT = 56565
-HOST = "127.0.0.1"
+MODEL_PATH = "qwen3-0.6b-q4.gguf"  # 您的Qwen3-0.6B INT4 GGUF文件
+PORT = 56565  # API端口
+HOST = "127.0.0.1"  # 监听所有接口
 
 server_process = None
 running = False
@@ -36,11 +24,11 @@ def start_server():
         "--model", MODEL_PATH,
         "--port", str(PORT),
         "--host", HOST,
-        "--n_gpu_layers", "-1"
+        "--n_gpu_layers", "-1"  # 使用所有可用GPU层，如果有；否则CPU
     ]
     server_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     running = True
-    logging.info(f"Server started on port {PORT}")
+    print(f"Server started on port {PORT}")
 
 def stop_server():
     global server_process, running
@@ -49,7 +37,7 @@ def stop_server():
     server_process.terminate()
     server_process.wait()
     running = False
-    logging.info("Server stopped")
+    print("Server stopped")
 
 def on_exit(icon):
     stop_server()
@@ -57,9 +45,10 @@ def on_exit(icon):
 
 def setup(icon):
     icon.visible = True
+    # 自动启动服务器
     start_server()
 
-# 创建图标
+# 创建图标（简单图像；可替换）
 image = Image.new('RGB', (64, 64), color=(73, 109, 137))
 icon = pystray.Icon("Edge LLM Base", image, "Edge LLM Base")
 
