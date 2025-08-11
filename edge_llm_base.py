@@ -8,16 +8,22 @@ from PIL import Image
 import sys
 import multiprocessing
 
+# --- 已移除之前错误的 "虚拟导入" ---
+
 def get_resource_path(relative_path):
-    """ 在 onedir 模式下，获取资源的绝对路径 """
-    # sys.executable 是指 edge_llm_base.exe
-    # os.path.dirname(sys.executable) 就是它所在的文件夹
-    base_path = os.path.dirname(sys.executable)
+    """
+    获取资源的绝对路径，对开发环境和 PyInstaller 的 onedir 模式都有效。
+    """
+    if getattr(sys, 'frozen', False):
+        # 程序被打包了 (frozen)
+        base_path = os.path.dirname(sys.executable)
+    else:
+        # 程序未被打包 (从 .py 脚本运行)
+        base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
 # --- 配置 ---
 MODEL_NAME = "qwen3-0.6b-q4.gguf"
-# 在 onedir 模式下，模型和 exe 在同一个文件夹里
 MODEL_PATH = get_resource_path(MODEL_NAME)
 PORT = 56565
 HOST = "127.0.0.1"
@@ -31,17 +37,12 @@ def start_server():
     if running:
         return
     
-    # 获取“启动器脚本”的路径
+    python_exe_name = "python.exe" if sys.platform == "win32" else "python"
+    python_path = get_resource_path(python_exe_name)
     runner_script_path = get_resource_path("server_runner.py")
-    
-    # 【关键】我们不再使用 sys.executable (它指向主程序)
-    # 而是直接调用 python.exe (或 python)，它和主程序在同一个文件夹里
-    python_exe = "python.exe" if sys.platform == "win32" else "python"
-    python_path = get_resource_path(python_exe)
-
 
     cmd = [
-        python_path, # <-- 使用文件夹内的 python 解释器
+        python_path,
         runner_script_path,
         "--model", MODEL_PATH,
         "--port", str(PORT),
@@ -88,3 +89,4 @@ if __name__ == '__main__':
         item('Exit', on_exit)
     )
     icon.run(setup)
+
