@@ -1,0 +1,93 @@
+name: Build Edge LLM Base Installers with Model
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          pip install llama-cpp-python[server] pystray pillow pyinstaller
+      - name: Build PyInstaller executable
+        run: pyinstaller --onefile --windowed edge_llm_base.py
+      - name: Download model from Hugging Face
+        run: Invoke-WebRequest -Uri https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -OutFile qwen3-0.6b-q4.gguf  # Windows用PowerShell下载
+      - name: Install NSIS
+        run: choco install nsis -y
+      - name: Build NSIS installer
+        run: makensis installer.nsi
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: setup.exe
+
+  build-linux-x86:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y libappindicator3-1 gir1.2-appindicator3-0.1 ruby-full wget
+          sudo gem install fpm
+          pip install llama-cpp-python[server] pystray pillow pyinstaller
+      - name: Build PyInstaller executable
+        run: pyinstaller --onefile --windowed edge_llm_base.py
+      - name: Download model from Hugging Face
+        run: wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O qwen3-0.6b-q4.gguf
+      - name: Build deb package with fpm
+        run: |
+          mkdir -p deb-root/opt/edge-llm-base
+          cp dist/edge_llm_base deb-root/opt/edge-llm-base/
+          cp qwen3-0.6b-q4.gguf deb-root/opt/edge-llm-base/
+          fpm -s dir -t deb -n edge-llm-base -v 1.0 --prefix / -C deb-root \
+            --description "Edge LLM Base for Qwen3 with Model" \
+            --after-install "ln -s /opt/edge-llm-base/edge_llm_base /usr/local/bin/edge_llm_base"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86-deb
+          path: edge-llm-base_1.0_amd64.deb
+
+  build-linux-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up QEMU for ARM64
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build in ARM64 Docker
+        run: |
+          docker run --rm -v $(pwd):/app -w /app --platform=linux/arm64 \
+            ubuntu:22.04 bash -c "
+              apt update && apt install -y python3 python3-pip ruby-full libappindicator3-1 gir1.2-appindicator3-0.1 wget
+              gem install fpm
+              pip install llama-cpp-python[server] pystray pillow pyinstaller --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+              pyinstaller --onefile --windowed edge_llm_base.py
+              wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O qwen3-0.6b-q4.gguf
+              mkdir -p deb-root/opt/edge-llm-base
+              cp dist/edge_llm_base deb-root/opt/edge-llm-base/
+              cp qwen3-0.6b-q4.gguf deb-root/opt/edge-llm-base/
+              fpm -s dir -t deb -n edge-llm-base -v 1.0 --prefix / -C deb-root \
+                --architecture arm64 --description 'Edge LLM Base for Qwen3 with Model' \
+                --after-install 'ln -s /opt/edge-llm-base/edge_llm_base /usr/local/bin/edge_llm_base'
+            "
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64-deb
+          path: edge-llm-base_1.0_arm64.deb
