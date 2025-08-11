@@ -1,9 +1,9 @@
-name: Build Edge LLM Base All-in-One Installers
+name: Build Edge LLM Base - True Offline Installers
 
 on: [push, workflow_dispatch]
 
 jobs:
-  build-windows-all-in-one:
+  build-windows-standalone:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -12,121 +12,110 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: |
-          pip install llama-cpp-python[server] pystray pillow pyinstaller uvicorn
-      - name: Download Microsoft C++ Redistributable
-        # 下载官方的VC++运行库安装包
-        run: Invoke-WebRequest -Uri https://aka.ms/vs/17/release/vc_redist.x64.exe -OutFile vc_redist.x64.exe
+        run: pip install llama-cpp-python[server] pystray pillow pyinstaller uvicorn
+      - name: Create icon file
+        # 运行Python脚本中的函数来创建图标文件
+        run: python -c "from edge_llm_base import create_image; create_image('🤖').save('icon.png')"
       - name: Build PyInstaller executable
-        # 在这里我们把 icon.png 和模型文件都作为数据文件添加
-        # 这样可以确保它们被正确地包含在编译目录中
+        # 将图标文件打包进exe
+        run: pyinstaller --onefile --windowed --add-data "icon.png;." edge_llm_base.py
+      - name: Download model and C++ Redist
         run: |
-          python -c "from edge_llm_base import create_image; create_image('🤖').save('icon.png')"
-          pyinstaller --onefile --windowed --add-data "icon.png;." edge_llm_base.py
-      - name: Download model from Hugging Face
-        run: Invoke-WebRequest -Uri https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -OutFile dist/qwen3-0.6b-q4.gguf
+          Invoke-WebRequest -Uri https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -OutFile dist/qwen3-0.6b-q4.gguf
+          Invoke-WebRequest -Uri https://aka.ms/vs/17/release/vc_redist.x64.exe -OutFile vc_redist.x64.exe
       - name: Install NSIS
         run: choco install nsis -y
-      - name: Create NSIS installer script with C++ Redist
+      - name: Create and Build NSIS Installer
         run: |
           echo '!define PRODUCT_NAME "Edge LLM Base"' > installer.nsi
-          echo '!define PRODUCT_VERSION "1.0"' >> installer.nsi
-          echo 'OutFile "setup-standalone.exe"' >> installer.nsi
+          echo 'OutFile "Edge-LLM-Base-Windows-Installer.exe"' >> installer.nsi
           echo 'InstallDir "$PROGRAMFILES\EdgeLLMBase"' >> installer.nsi
           echo 'RequestExecutionLevel admin' >> installer.nsi
-          echo 'Page directory' >> installer.nsi
-          echo 'Page instfiles' >> installer.nsi
-          echo 'Section "MainSection"' >> installer.nsi
+          echo 'Section "Main"' >> installer.nsi
           echo '  SetOutPath "$INSTDIR"' >> installer.nsi
-          # 将 VC++ 运行库打包到安装程序中，并在安装时静默执行
           echo '  File "vc_redist.x64.exe"' >> installer.nsi
           echo '  ExecWait ''"$INSTDIR\vc_redist.x64.exe" /install /quiet /norestart''' >> installer.nsi
           echo '  Delete "$INSTDIR\vc_redist.x64.exe"' >> installer.nsi
-          # 复制主程序和模型
           echo '  File "dist\edge_llm_base.exe"' >> installer.nsi
           echo '  File "dist\qwen3-0.6b-q4.gguf"' >> installer.nsi
           echo '  WriteUninstaller "$INSTDIR\uninstall.exe"' >> installer.nsi
           echo '  CreateShortCut "$DESKTOP\Edge LLM Base.lnk" "$INSTDIR\edge_llm_base.exe"' >> installer.nsi
           echo 'SectionEnd' >> installer.nsi
-          # ... (完整的卸载逻辑)
-      - name: Build NSIS installer
-        run: makensis installer.nsi
+          makensis installer.nsi
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer-standalone
-          path: setup-standalone.exe
+          path: Edge-LLM-Base-Windows-Installer.exe
 
   build-linux-appimage:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        # 同时为 x86_64 和 aarch64 (ARM64) 架构构建
         arch: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare for ARM64 build if needed
+      - name: Set up QEMU for ARM64 build if needed
         if: matrix.arch == 'aarch64'
         uses: docker/setup-qemu-action@v3
-      - name: Build AppImage
-        uses: aminya/setup-cross-toolchain-action@v2
         with:
-          arch: ${{ matrix.arch }}
-          skip-qemu: true
-      - run: |
-          set -ex
-          # 安装系统依赖
-          sudo apt-get update
-          sudo apt-get install -y fuse libglib2.0-0
-          
-          # 创建虚拟Python环境
-          python3 -m venv venv
-          source venv/bin/activate
-          
-          # 安装Python包
-          pip install --upgrade pip
-          pip install llama-cpp-python[server] pystray pillow pyinstaller uvicorn
-          
-          # 创建图标和.desktop文件
-          python -c "from edge_llm_base import create_image; create_image('🤖').save('edge_llm_base.png')"
-          echo '[Desktop Entry]' > edge_llm_base.desktop
-          echo 'Version=1.0' >> edge_llm_base.desktop
-          echo 'Type=Application' >> edge_llm_base.desktop
-          echo 'Name=Edge LLM Base' >> edge_llm_base.desktop
-          echo 'Exec=edge_llm_base' >> edge_llm_base.desktop
-          echo 'Icon=edge_llm_base' >> edge_llm_base.desktop
-          echo 'Categories=Utility;' >> edge_llm_base.desktop
+          platforms: arm64
+      - name: Build AppImage using Docker
+        run: |
+          docker run --rm -v $(pwd):/app -w /app --platform linux/${{ matrix.arch == 'aarch64' && 'arm64' || 'amd64' }} \
+            ubuntu:22.04 bash -c '
+              set -ex
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              # 安装最基础的依赖和构建工具
+              apt-get install -y python3-pip python3-venv wget fuse libglib2.0-0 ninja-build
+              
+              python3 -m venv venv
+              source venv/bin/activate
+              
+              pip install --upgrade pip
+              pip install llama-cpp-python[server] pystray pillow pyinstaller uvicorn --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 
-          # 编译Python脚本
-          pyinstaller --noconfirm --onefile --windowed \
-            --add-data "edge_llm_base.png:." \
-            --add-data "edge_llm_base.desktop:." \
-            edge_llm_base.py
-
-          # 下载模型
-          wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O dist/qwen3-0.6b-q4.gguf
-          
-          # 下载linuxdeploy和appimagetool
-          wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.arch }}.AppImage -O linuxdeploy.AppImage
-          wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${{ matrix.arch }}.AppImage -O appimagetool.AppImage
-          chmod +x linuxdeploy.AppImage appimagetool.AppImage
-          
-          # 使用linuxdeploy创建AppDir，它会自动打包所有依赖
-          ./linuxdeploy.AppImage --appdir AppDir \
-            -e dist/edge_llm_base \
-            -d dist/edge_llm_base.desktop \
-            -i dist/edge_llm_base.png \
-            --output appimage
-
-          # 将模型文件复制到AppDir中，确保它和可执行文件在一起
-          cp dist/qwen3-0.6b-q4.gguf AppDir/usr/bin/
-
-          # 创建最终的AppImage文件
-          ./appimagetool.AppImage AppDir
-        env:
-          ARCH: ${{ matrix.arch }}
-          
+              # 创建图标和 .desktop 文件 (AppImage 需要的元数据)
+              python3 -c "from edge_llm_base import create_image; create_image(''🤖'').save(''icon.png'')"
+              echo "[Desktop Entry]" > edge_llm_base.desktop
+              echo "Name=Edge LLM Base" >> edge_llm_base.desktop
+              echo "Exec=AppRun" >> edge_llm_base.desktop
+              echo "Icon=icon" >> edge_llm_base.desktop
+              echo "Type=Application" >> edge_llm_base.desktop
+              echo "Categories=Utility;" >> edge_llm_base.desktop
+              
+              # 编译Python脚本
+              pyinstaller --noconfirm --onefile --windowed --add-data "icon.png:." edge_llm_base.py
+              
+              # 下载AppImage构建工具
+              wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.arch }}.AppImage -O linuxdeploy.AppImage
+              chmod +x linuxdeploy.AppImage
+              
+              # 使用 linuxdeploy 创建 AppDir 目录, 它会自动把所有依赖库都复制进去
+              ./linuxdeploy.AppImage --appdir AppDir \
+                -e dist/edge_llm_base \
+                -i icon.png \
+                -d edge_llm_base.desktop
+              
+              # 把模型和主程序复制到正确的位置
+              cp dist/edge_llm_base AppDir/usr/bin/
+              wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O AppDir/usr/bin/qwen3-0.6b-q4.gguf
+              
+              # 设置AppRun脚本，这是AppImage的入口点
+              echo "#!/bin/sh" > AppDir/AppRun
+              echo "cd \"\$(dirname \"\$0\")/usr/bin\"" >> AppDir/AppRun
+              echo "./edge_llm_base" >> AppDir/AppRun
+              chmod +x AppDir/AppRun
+              
+              # 下载appimagetool并打包
+              wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${{ matrix.arch }}.AppImage -O appimagetool.AppImage
+              chmod +x appimagetool.AppImage
+              ./appimagetool.AppImage AppDir
+            '
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: linux-appimage-${{ matrix.arch }}
-          path: ./*.AppImage
+          path: ./*${{ matrix.arch }}.AppImage
