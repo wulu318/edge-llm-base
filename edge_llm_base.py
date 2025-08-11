@@ -8,15 +8,29 @@ from PIL import Image
 import sys
 import multiprocessing
 
+def get_log_file_path():
+    """获取一个保证可写的日志文件路径。"""
+    try:
+        home_dir = os.path.expanduser("~")
+        log_dir = os.path.join(home_dir, ".EdgeLLMBase")
+        os.makedirs(log_dir, exist_ok=True)
+        return os.path.join(log_dir, "edge_llm_base_log.txt")
+    except Exception:
+        # Fallback to the executable's directory if the user's home is not writable
+        if getattr(sys, 'frozen', False):
+            return os.path.join(os.path.dirname(sys.executable), "edge_llm_base_log.txt")
+        else:
+            return "edge_llm_base_log.txt"
+
+LOG_FILE_PATH = get_log_file_path()
+
 def get_resource_path(relative_path):
     """
     获取资源的绝对路径，对开发环境和 PyInstaller 的 onedir 模式都有效。
     """
     if getattr(sys, 'frozen', False):
-        # 程序被打包了 (frozen)
         base_path = os.path.dirname(sys.executable)
     else:
-        # 程序未被打包 (从 .py 脚本运行)
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
@@ -24,9 +38,7 @@ def get_resource_path(relative_path):
 MODEL_NAME = "qwen3-0.6b-q4.gguf"
 MODEL_PATH = get_resource_path(MODEL_NAME)
 PORT = 56565
-HOST = "127.0.0.1"
-LOG_FILE_NAME = "edge_llm_base_log.txt"
-LOG_FILE_PATH = get_resource_path(LOG_FILE_NAME)
+HOST = "0.0.0.0"
 
 # --- 全局变量 ---
 server_process = None
@@ -54,15 +66,18 @@ def start_server():
     python_path = get_resource_path(python_exe_name)
     runner_script_path = get_resource_path("server_runner.py")
 
-    # 启动前检查关键文件是否存在
+    write_log(f"期望的 Python 解释器路径: {python_path}")
+    write_log(f"期望的启动器脚本路径: {runner_script_path}")
+    write_log(f"期望的模型路径: {MODEL_PATH}")
+
     if not os.path.exists(python_path):
-        write_log(f"致命错误: 在 {python_path} 未找到 Python 解释器。")
+        write_log(f"致命错误: 未找到 Python 解释器。")
         return
     if not os.path.exists(runner_script_path):
-        write_log(f"致命错误: 在 {runner_script_path} 未找到启动器脚本。")
+        write_log(f"致命错误: 未找到启动器脚本。")
         return
     if not os.path.exists(MODEL_PATH):
-        write_log(f"致命错误: 在 {MODEL_PATH} 未找到模型文件。")
+        write_log(f"致命错误: 未找到模型文件。")
         return
 
     cmd = [
@@ -80,7 +95,6 @@ def start_server():
         
     try:
         write_log(f"执行命令: {' '.join(cmd)}")
-        # 以追加模式打开日志文件，用于接收子进程的所有输出
         log_file_handle = open(LOG_FILE_PATH, "a", encoding="utf-8", buffering=1)
         
         server_process = subprocess.Popen(
@@ -127,14 +141,16 @@ def setup(icon):
 if __name__ == '__main__':
     multiprocessing.freeze_support()
 
-    # 启动前清空一次日志文件，方便查看本次运行的日志
     if os.path.exists(LOG_FILE_PATH):
         try:
             os.remove(LOG_FILE_PATH)
         except OSError as e:
             print(f"移除旧日志文件失败: {e}")
 
-    write_log("--- 主程序入口 ---")
+    write_log(f"--- 主程序入口 --- 日志将写入到: {LOG_FILE_PATH}")
+    if getattr(sys, 'frozen', False):
+        write_log(f"程序已打包. sys.executable: {sys.executable}")
+        write_log(f"资源根目录: {os.path.dirname(sys.executable)}")
 
     image = Image.new('RGB', (64, 64), color=(73, 109, 137))
     icon = pystray.Icon("Edge LLM Base", image, "Edge LLM Base")
