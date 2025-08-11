@@ -39,7 +39,7 @@ def stop_server():
     running = False
     print("Server stopped")
 
-def on_exit(icon):
+def on_exit(icon, item):  # 接收 icon 和 item 两个参数
     stop_server()
     icon.stop()
 
@@ -54,9 +54,9 @@ icon = pystray.Icon("Edge LLM Base", image, "Edge LLM Base")
 
 # 菜单
 icon.menu = pystray.Menu(
-    item('Start Server', start_server, enabled=lambda: not running),
-    item('Stop Server', stop_server, enabled=lambda: running),
-    item('Exit', lambda: on_exit(icon))
+    item('Start Server', start_server, enabled=lambda _: not running),
+    item('Stop Server', stop_server, enabled=lambda _: running),
+    item('Exit', on_exit) # 直接传递函数，无需 lambda
 )
 
 # 运行托盘
