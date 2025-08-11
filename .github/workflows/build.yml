@@ -14,12 +14,23 @@ jobs:
       - name: Install dependencies
         run: |
           pip install llama-cpp-python[server] pystray pillow pyinstaller
-      - name: Build PyInstaller executable
-        run: pyinstaller --onefile --windowed --add-data "qwen3-0.6b-q4.gguf;." edge_llm_base.py  # 添加模型文件
       - name: Download model from Hugging Face
-        run: Invoke-WebRequest -Uri https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -OutFile qwen3-0.6b-q4.gguf
+        run: |
+          Invoke-WebRequest -Uri https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -OutFile qwen3-0.6b-q4.gguf
+      - name: Build PyInstaller executable with all dependencies
+        run: |
+          pyinstaller --onefile --windowed ^
+            --add-data "qwen3-0.6b-q4.gguf;." ^
+            --hidden-import=llama_cpp.server ^
+            --hidden-import=llama_cpp ^
+            --hidden-import=pystray ^
+            --hidden-import=PIL ^
+            edge_llm_base.py
       - name: Install NSIS
         run: choco install nsis -y
+      - name: Download Visual C++ Redistributable
+        run: |
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile "vc_redist.x64.exe"
       - name: Create NSIS installer script
         run: |
           echo '!define PRODUCT_NAME "Edge LLM Base"' > installer.nsi
@@ -27,14 +38,17 @@ jobs:
           echo '!define PRODUCT_PUBLISHER "YourName"' >> installer.nsi
           echo 'SetCompressor lzma' >> installer.nsi
           echo 'Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"' >> installer.nsi
-          echo 'OutFile "setup.exe"' >> installer.nsi
+          echo 'OutFile "EdgeLLMBase_Setup.exe"' >> installer.nsi
           echo 'InstallDir "$PROGRAMFILES\EdgeLLMBase"' >> installer.nsi
+          echo 'RequestExecutionLevel admin' >> installer.nsi
           echo 'ShowInstDetails show' >> installer.nsi
           echo 'Section "MainSection" SEC01' >> installer.nsi
           echo '  SetOutPath "$INSTDIR"' >> installer.nsi
           echo '  SetOverwrite ifnewer' >> installer.nsi
           echo '  File "dist\edge_llm_base.exe"' >> installer.nsi
           echo '  File "qwen3-0.6b-q4.gguf"' >> installer.nsi
+          echo '  File "vc_redist.x64.exe"' >> installer.nsi
+          echo '  ExecWait "\"$INSTDIR\vc_redist.x64.exe\" /quiet /norestart"' >> installer.nsi
           echo '  CreateDirectory "$SMPROGRAMS\Edge LLM Base"' >> installer.nsi
           echo '  CreateShortCut "$SMPROGRAMS\Edge LLM Base\Edge LLM Base.lnk" "$INSTDIR\edge_llm_base.exe"' >> installer.nsi
           echo '  CreateShortCut "$DESKTOP\Edge LLM Base.lnk" "$INSTDIR\edge_llm_base.exe"' >> installer.nsi
@@ -43,10 +57,12 @@ jobs:
           echo '  WriteUninstaller "$INSTDIR\uninstall.exe"' >> installer.nsi
           echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "DisplayName" "${PRODUCT_NAME}"' >> installer.nsi
           echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "UninstallString" "$INSTDIR\uninstall.exe"' >> installer.nsi
+          echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "DisplayVersion" "${PRODUCT_VERSION}"' >> installer.nsi
           echo 'SectionEnd' >> installer.nsi
           echo 'Section Uninstall' >> installer.nsi
           echo '  Delete "$INSTDIR\edge_llm_base.exe"' >> installer.nsi
           echo '  Delete "$INSTDIR\qwen3-0.6b-q4.gguf"' >> installer.nsi
+          echo '  Delete "$INSTDIR\vc_redist.x64.exe"' >> installer.nsi
           echo '  Delete "$INSTDIR\uninstall.exe"' >> installer.nsi
           echo '  Delete "$SMPROGRAMS\Edge LLM Base\Edge LLM Base.lnk"' >> installer.nsi
           echo '  Delete "$DESKTOP\Edge LLM Base.lnk"' >> installer.nsi
@@ -60,10 +76,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: setup.exe
+          path: EdgeLLMBase_Setup.exe
 
   build-linux-x86:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04  # 使用 Ubuntu 20.04 以获得更好的兼容性
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -73,37 +89,78 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          # 修复 libasound2 依赖问题
-          sudo apt-get install -y ruby-full wget ninja-build libappindicator3-1 gir1.2-appindicator3-0.1 libasound2t64
+          sudo apt-get install -y ruby-full wget libgtk-3-0 libnotify4 libnss3 libxss1 libasound2t64 libxtst6 xdg-utils
           sudo gem install fpm
           pip install llama-cpp-python[server] pystray pillow pyinstaller
-      - name: Build PyInstaller executable
-        run: pyinstaller --onefile --add-data "qwen3-0.6b-q4.gguf:." edge_llm_base.py  # 添加模型文件
       - name: Download model from Hugging Face
         run: wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O qwen3-0.6b-q4.gguf
-      - name: Create post-install script for fpm
+      - name: Build PyInstaller executable with all dependencies
         run: |
-          echo '#!/bin/sh' > post-install.sh
-          echo 'ln -sf /opt/edge-llm-base/edge_llm_base /usr/local/bin/edge_llm_base' >> post-install.sh
-          chmod +x post-install.sh
-      - name: Build deb package with fpm
+          pyinstaller --onefile \
+            --add-data "qwen3-0.6b-q4.gguf:." \
+            --hidden-import=llama_cpp.server \
+            --hidden-import=llama_cpp \
+            --hidden-import=pystray \
+            --hidden-import=PIL \
+            edge_llm_base.py
+      - name: Create standalone package
         run: |
-          mkdir -p deb-root/opt/edge-llm-base
-          cp dist/edge_llm_base deb-root/opt/edge-llm-base/
-          cp qwen3-0.6b-q4.gguf deb-root/opt/edge-llm-base/
-          fpm -s dir -t deb -n edge-llm-base -v 1.0 --prefix / -C deb-root \
-            --description "Edge LLM Base for Qwen3 with Model" \
-            --depends "libappindicator3-1" \
-            --depends "libasound2t64" \  # 修复这里
-            --after-install ./post-install.sh
+          mkdir -p standalone/opt/edge-llm-base
+          cp dist/edge_llm_base standalone/opt/edge-llm-base/
+          cp qwen3-0.6b-q4.gguf standalone/opt/edge-llm-base/
+          
+          # 创建安装脚本
+          cat > standalone/install.sh << 'EOF'
+          #!/bin/bash
+          # 这是一个自包含的安装脚本
+          # 会复制所有文件到 /opt/edge-llm-base 并设置权限
+          
+          set -e
+          
+          # 创建目录
+          sudo mkdir -p /opt/edge-llm-base
+          
+          # 复制文件
+          sudo cp -r opt/edge-llm-base/* /opt/edge-llm-base/
+          
+          # 设置权限
+          sudo chmod +x /opt/edge-llm-base/edge_llm_base
+          
+          # 创建桌面快捷方式
+          mkdir -p $HOME/.local/share/applications
+          cat > $HOME/.local/share/applications/edge-llm-base.desktop << 'DESKTOP_EOF'
+          [Desktop Entry]
+          Name=Edge LLM Base
+          Exec=/opt/edge-llm-base/edge_llm_base
+          Icon=application-x-executable
+          Type=Application
+          Categories=Utility;
+          DESKTOP_EOF
+          
+          chmod +x $HOME/.local/share/applications/edge-llm-base.desktop
+          
+          # 创建桌面图标
+          if [ -d $HOME/Desktop ]; then
+              cp $HOME/.local/share/applications/edge-llm-base.desktop $HOME/Desktop/
+              chmod +x $HOME/Desktop/edge-llm-base.desktop
+          fi
+          
+          echo "安装完成！程序已安装到 /opt/edge-llm-base/"
+          echo "可以通过应用程序菜单或桌面图标启动"
+          EOF
+          
+          chmod +x standalone/install.sh
+          
+          # 创建 tar.gz 包
+          tar -czf edge-llm-base-linux-x86.tar.gz -C standalone .
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: linux-x86-deb
-          path: ./*.deb
+          name: linux-x86-standalone
+          path: edge-llm-base-linux-x86.tar.gz
 
   build-linux-arm64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v4
       - name: Set up QEMU for ARM64
@@ -113,31 +170,76 @@ jobs:
       - name: Build in ARM64 Docker
         run: |
           docker run --rm --privileged -v $(pwd):/app -w /app --platform=linux/arm64 \
-            ubuntu:22.04 bash -c "
+            ubuntu:20.04 bash -c "
               set -e
               apt-get update
-              # 修复 libasound2 依赖问题
-              apt-get install -y python3 python3-pip ruby-full wget ninja-build libappindicator3-1 gir1.2-appindicator3-0.1 libasound2t64
+              apt-get install -y python3 python3-pip ruby-full wget libgtk-3-0 libnotify4 libnss3 libxss1 libasound2t64 libxtst6 xdg-utils
               gem install fpm
               pip install llama-cpp-python[server] pystray pillow pyinstaller --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
-              pyinstaller --onefile --add-data 'qwen3-0.6b-q4.gguf:.' edge_llm_base.py
+              
+              # Download model
               wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O qwen3-0.6b-q4.gguf
               
-              echo '#!/bin/sh' > post-install.sh
-              echo 'ln -sf /opt/edge-llm-base/edge_llm_base /usr/local/bin/edge_llm_base' >> post-install.sh
-              chmod +x post-install.sh
-
-              mkdir -p deb-root/opt/edge-llm-base
-              cp dist/edge_llm_base deb-root/opt/edge-llm-base/
-              cp qwen3-0.6b-q4.gguf deb-root/opt/edge-llm-base/
-              fpm -s dir -t deb -n edge-llm-base -v 1.0 --prefix / -C deb-root \
-                --architecture arm64 --description 'Edge LLM Base for Qwen3 with Model' \
-                --depends 'libappindicator3-1' \
-                --depends 'libasound2t64' \  # 修复这里
-                --after-install ./post-install.sh
+              # Build executable
+              pyinstaller --onefile \
+                --add-data 'qwen3-0.6b-q4.gguf:.' \
+                --hidden-import=llama_cpp.server \
+                --hidden-import=llama_cpp \
+                --hidden-import=pystray \
+                --hidden-import=PIL \
+                edge_llm_base.py
+              
+              # Create standalone package
+              mkdir -p standalone/opt/edge-llm-base
+              cp dist/edge_llm_base standalone/opt/edge-llm-base/
+              cp qwen3-0.6b-q4.gguf standalone/opt/edge-llm-base/
+              
+              # Create install script
+              cat > standalone/install.sh << 'EOF'
+              #!/bin/bash
+              # Self-contained installation script
+              
+              set -e
+              
+              # Create directory
+              sudo mkdir -p /opt/edge-llm-base
+              
+              # Copy files
+              sudo cp -r opt/edge-llm-base/* /opt/edge-llm-base/
+              
+              # Set permissions
+              sudo chmod +x /opt/edge-llm-base/edge_llm_base
+              
+              # Create desktop shortcut
+              mkdir -p \$HOME/.local/share/applications
+              cat > \$HOME/.local/share/applications/edge-llm-base.desktop << 'DESKTOP_EOF'
+              [Desktop Entry]
+              Name=Edge LLM Base
+              Exec=/opt/edge-llm-base/edge_llm_base
+              Icon=application-x-executable
+              Type=Application
+              Categories=Utility;
+              DESKTOP_EOF
+              
+              chmod +x \$HOME/.local/share/applications/edge-llm-base.desktop
+              
+              # Create desktop icon
+              if [ -d \$HOME/Desktop ]; then
+                  cp \$HOME/.local/share/applications/edge-llm-base.desktop \$HOME/Desktop/
+                  chmod +x \$HOME/Desktop/edge-llm-base.desktop
+              fi
+              
+              echo 'Installation complete! Program installed to /opt/edge-llm-base/'
+              echo 'You can launch it from the application menu or desktop icon'
+              EOF
+              
+              chmod +x standalone/install.sh
+              
+              # Create tar.gz package
+              tar -czf edge-llm-base-linux-arm64.tar.gz -C standalone .
             "
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: linux-arm64-deb
-          path: ./*_arm64.deb
+          name: linux-arm64-standalone
+          path: edge-llm-base-linux-arm64.tar.gz
