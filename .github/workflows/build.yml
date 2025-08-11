@@ -1,9 +1,9 @@
-name: Build Edge LLM Base - True Offline Installers
+name: Build Edge LLM Base Installers with Model
 
 on: [push, workflow_dispatch]
 
 jobs:
-  build-windows-standalone:
+  build-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -12,102 +12,128 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: pip install llama-cpp-python[server] pystray pillow pyinstaller uvicorn
-      - name: Create icon file
-        # 修正: 为Python字符串添加了正确的引号, 使用双引号包围整个命令
-        run: python -c "from edge_llm_base import create_image; create_image('🤖').save('icon.png')"
-      - name: Build PyInstaller executable
-        run: pyinstaller --onefile --windowed --add-data "icon.png;." edge_llm_base.py
-      - name: Download model and C++ Redist
         run: |
-          Invoke-WebRequest -Uri https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -OutFile dist/qwen3-0.6b-q4.gguf
-          Invoke-WebRequest -Uri https://aka.ms/vs/17/release/vc_redist.x64.exe -OutFile vc_redist.x64.exe
+          pip install llama-cpp-python[server] pystray pillow pyinstaller
+      - name: Build PyInstaller executable
+        run: pyinstaller --onefile --windowed edge_llm_base.py
+      - name: Download model from Hugging Face
+        run: Invoke-WebRequest -Uri https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -OutFile qwen3-0.6b-q4.gguf
       - name: Install NSIS
         run: choco install nsis -y
-      - name: Create and Build NSIS Installer
+      - name: Create NSIS installer script
         run: |
           echo '!define PRODUCT_NAME "Edge LLM Base"' > installer.nsi
-          echo 'OutFile "Edge-LLM-Base-Windows-Installer.exe"' >> installer.nsi
+          echo '!define PRODUCT_VERSION "1.0"' >> installer.nsi
+          echo '!define PRODUCT_PUBLISHER "YourName"' >> installer.nsi
+          echo 'SetCompressor lzma' >> installer.nsi
+          echo 'Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"' >> installer.nsi
+          echo 'OutFile "setup.exe"' >> installer.nsi
           echo 'InstallDir "$PROGRAMFILES\EdgeLLMBase"' >> installer.nsi
-          echo 'RequestExecutionLevel admin' >> installer.nsi
-          echo 'Section "Main"' >> installer.nsi
+          echo 'ShowInstDetails show' >> installer.nsi
+          echo 'Section "MainSection" SEC01' >> installer.nsi
           echo '  SetOutPath "$INSTDIR"' >> installer.nsi
-          echo '  File "vc_redist.x64.exe"' >> installer.nsi
-          echo '  ExecWait ''"$INSTDIR\vc_redist.x64.exe" /install /quiet /norestart''' >> installer.nsi
-          echo '  Delete "$INSTDIR\vc_redist.x64.exe"' >> installer.nsi
+          echo '  SetOverwrite ifnewer' >> installer.nsi
           echo '  File "dist\edge_llm_base.exe"' >> installer.nsi
-          echo '  File "dist\qwen3-0.6b-q4.gguf"' >> installer.nsi
-          echo '  WriteUninstaller "$INSTDIR\uninstall.exe"' >> installer.nsi
+          echo '  File "qwen3-0.6b-q4.gguf"' >> installer.nsi
+          echo '  CreateDirectory "$SMPROGRAMS\Edge LLM Base"' >> installer.nsi
+          echo '  CreateShortCut "$SMPROGRAMS\Edge LLM Base\Edge LLM Base.lnk" "$INSTDIR\edge_llm_base.exe"' >> installer.nsi
           echo '  CreateShortCut "$DESKTOP\Edge LLM Base.lnk" "$INSTDIR\edge_llm_base.exe"' >> installer.nsi
           echo 'SectionEnd' >> installer.nsi
-          makensis installer.nsi
+          echo 'Section -Post' >> installer.nsi
+          echo '  WriteUninstaller "$INSTDIR\uninstall.exe"' >> installer.nsi
+          echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "DisplayName" "${PRODUCT_NAME}"' >> installer.nsi
+          echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "UninstallString" "$INSTDIR\uninstall.exe"' >> installer.nsi
+          echo 'SectionEnd' >> installer.nsi
+          echo 'Section Uninstall' >> installer.nsi
+          echo '  Delete "$INSTDIR\edge_llm_base.exe"' >> installer.nsi
+          echo '  Delete "$INSTDIR\qwen3-0.6b-q4.gguf"' >> installer.nsi
+          echo '  Delete "$INSTDIR\uninstall.exe"' >> installer.nsi
+          echo '  Delete "$SMPROGRAMS\Edge LLM Base\Edge LLM Base.lnk"' >> installer.nsi
+          echo '  Delete "$DESKTOP\Edge LLM Base.lnk"' >> installer.nsi
+          echo '  RMDir "$SMPROGRAMS\Edge LLM Base"' >> installer.nsi
+          echo '  RMDir "$INSTDIR"' >> installer.nsi
+          echo '  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"' >> installer.nsi
+          echo 'SectionEnd' >> installer.nsi
+      - name: Build NSIS installer
+        run: makensis installer.nsi
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-installer-standalone
-          path: Edge-LLM-Base-Windows-Installer.exe
+          name: windows-installer
+          path: setup.exe
 
-  build-linux-appimage:
+  build-linux-x86:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v4
-      - name: Set up QEMU for ARM64 build if needed
-        if: matrix.arch == 'aarch64'
-        uses: docker/setup-qemu-action@v3
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          platforms: arm64
-      - name: Build AppImage using Docker
+          python-version: '3.12'
+      - name: Install dependencies
         run: |
-          docker run --rm -v $(pwd):/app -w /app --platform linux/${{ matrix.arch == 'aarch64' && 'arm64' || 'amd64' }} \
-            ubuntu:22.04 bash -c '
-              set -ex
-              export DEBIAN_FRONTEND=noninteractive
-              apt-get update
-              apt-get install -y python3-pip python3-venv wget fuse libglib2.0-0 ninja-build
-              
-              python3 -m venv venv
-              source venv/bin/activate
-              
-              pip install --upgrade pip
-              pip install llama-cpp-python[server] pystray pillow pyinstaller uvicorn --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
-
-              # 修正: 为Python字符串添加了正确的引号, 使用双引号包围整个命令
-              python3 -c "from edge_llm_base import create_image; create_image(''🤖'').save(''icon.png'')"
-              
-              echo "[Desktop Entry]" > edge_llm_base.desktop
-              echo "Name=Edge LLM Base" >> edge_llm_base.desktop
-              echo "Exec=AppRun" >> edge_llm_base.desktop
-              echo "Icon=icon" >> edge_llm_base.desktop
-              echo "Type=Application" >> edge_llm_base.desktop
-              echo "Categories=Utility;" >> edge_llm_base.desktop
-              
-              pyinstaller --noconfirm --onefile --windowed --add-data "icon.png:." edge_llm_base.py
-              
-              wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.arch }}.AppImage -O linuxdeploy.AppImage
-              chmod +x linuxdeploy.AppImage
-              
-              ./linuxdeploy.AppImage --appdir AppDir \
-                -e dist/edge_llm_base \
-                -i icon.png \
-                -d edge_llm_base.desktop
-              
-              cp dist/edge_llm_base AppDir/usr/bin/
-              wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O AppDir/usr/bin/qwen3-0.6b-q4.gguf
-              
-              echo "#!/bin/sh" > AppDir/AppRun
-              echo "cd \"\$(dirname \"\$0\")/usr/bin\"" >> AppDir/AppRun
-              echo "./edge_llm_base" >> AppDir/AppRun
-              chmod +x AppDir/AppRun
-              
-              wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${{ matrix.arch }}.AppImage -O appimagetool.AppImage
-              chmod +x appimagetool.AppImage
-              ./appimagetool.AppImage AppDir
-            '
+          sudo apt-get update
+          # 添加 ninja-build 并恢复 pystray 的依赖
+          sudo apt-get install -y ruby-full wget ninja-build libappindicator3-1 gir1.2-appindicator3-0.1
+          sudo gem install fpm
+          pip install llama-cpp-python[server] pystray pillow pyinstaller
+      - name: Build PyInstaller executable
+        run: pyinstaller --onefile edge_llm_base.py
+      - name: Download model from Hugging Face
+        run: wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O qwen3-0.6b-q4.gguf
+      - name: Create post-install script for fpm
+        run: |
+          echo '#!/bin/sh' > post-install.sh
+          echo 'ln -sf /opt/edge-llm-base/edge_llm_base /usr/local/bin/edge_llm_base' >> post-install.sh
+          chmod +x post-install.sh
+      - name: Build deb package with fpm
+        run: |
+          mkdir -p deb-root/opt/edge-llm-base
+          cp dist/edge_llm_base deb-root/opt/edge-llm-base/
+          cp qwen3-0.6b-q4.gguf deb-root/opt/edge-llm-base/
+          fpm -s dir -t deb -n edge-llm-base -v 1.0 --prefix / -C deb-root \
+            --description "Edge LLM Base for Qwen3 with Model" \
+            --after-install ./post-install.sh
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: linux-appimage-${{ matrix.arch }}
-          path: ./*${{ matrix.arch }}.AppImage
+          name: linux-x86-deb
+          path: ./*.deb
+
+  build-linux-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up QEMU for ARM64
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build in ARM64 Docker
+        run: |
+          docker run --rm --privileged -v $(pwd):/app -w /app --platform=linux/arm64 \
+            ubuntu:22.04 bash -c "
+              set -e
+              apt-get update
+              # 添加 ninja-build 并恢复 pystray 的依赖
+              apt-get install -y python3 python3-pip ruby-full wget ninja-build libappindicator3-1 gir1.2-appindicator3-0.1
+              gem install fpm
+              pip install llama-cpp-python[server] pystray pillow pyinstaller --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+              pyinstaller --onefile edge_llm_base.py
+              wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O qwen3-0.6b-q4.gguf
+              
+              echo '#!/bin/sh' > post-install.sh
+              echo 'ln -sf /opt/edge-llm-base/edge_llm_base /usr/local/bin/edge_llm_base' >> post-install.sh
+              chmod +x post-install.sh
+
+              mkdir -p deb-root/opt/edge-llm-base
+              cp dist/edge_llm_base deb-root/opt/edge-llm-base/
+              cp qwen3-0.6b-q4.gguf deb-root/opt/edge-llm-base/
+              fpm -s dir -t deb -n edge-llm-base -v 1.0 --prefix / -C deb-root \
+                --architecture arm64 --description 'Edge LLM Base for Qwen3 with Model' \
+                --after-install ./post-install.sh
+            "
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64-deb
+          path: ./*_arm64.deb
