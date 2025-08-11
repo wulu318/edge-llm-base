@@ -105,9 +105,9 @@ def setup_tray(icon):
     icon.visible = True
     start_server(icon)
 
-# --- 主程序入口 ---
+# 主程序入口
 icon_image = create_image("🤖")
-# 为了兼容 PyInstaller，将 PIL Image 对象保存为文件再加载
+# 为了兼容性，先保存再加载
 icon_image.save("icon.png")
 icon = pystray.Icon("Edge LLM Base", Image.open("icon.png"), "Edge LLM Base")
 update_menu(icon)
