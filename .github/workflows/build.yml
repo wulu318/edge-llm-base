@@ -14,7 +14,7 @@ jobs:
       - name: Install dependencies
         run: pip install llama-cpp-python[server] pystray pillow pyinstaller uvicorn
       - name: Create icon file
-        # 修正：为Python字符串添加了正确的引号
+        # 修正: 为Python字符串添加了正确的引号, 使用双引号包围整个命令
         run: python -c "from edge_llm_base import create_image; create_image('🤖').save('icon.png')"
       - name: Build PyInstaller executable
         run: pyinstaller --onefile --windowed --add-data "icon.png;." edge_llm_base.py
@@ -74,7 +74,7 @@ jobs:
               pip install --upgrade pip
               pip install llama-cpp-python[server] pystray pillow pyinstaller uvicorn --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 
-              # 修正：为Python字符串添加了正确的引号
+              # 修正: 为Python字符串添加了正确的引号, 使用双引号包围整个命令
               python3 -c "from edge_llm_base import create_image; create_image(''🤖'').save(''icon.png'')"
               
               echo "[Desktop Entry]" > edge_llm_base.desktop
