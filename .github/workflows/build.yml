@@ -8,7 +8,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
-        id: setup-python # 给这个步骤一个 id，方便后面引用
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -16,11 +15,10 @@ jobs:
         run: |
           pip install llama-cpp-python[server] pystray pillow pyinstaller
       
-      # 关键改动: 使用 --add-binary 强制打包 python.exe
+      # 使用 --add-binary 强制打包 python.exe
       - name: Build PyInstaller executable
         shell: pwsh
         run: |
-          # 获取 python.exe 的完整路径
           $pythonPath = (Get-Command python).Source
           pyinstaller --onedir --windowed --name edge_llm_base `
             --hidden-import=llama_cpp.server `
@@ -35,15 +33,45 @@ jobs:
       - name: Install NSIS
         run: choco install nsis -y
       
+      # 关键改动: 完整、正确的 NSIS 脚本生成逻辑
       - name: Create NSIS installer script
         run: |
-          # NSIS 脚本部分无需改动
           echo '!define PRODUCT_NAME "Edge LLM Base"' > installer.nsi
-          # ... (省略和之前版本相同的 NSIS 代码) ...
+          echo '!define PRODUCT_VERSION "1.0"' >> installer.nsi
+          echo '!define PRODUCT_PUBLISHER "YourName"' >> installer.nsi
+          echo 'SetCompressor lzma' >> installer.nsi
+          echo 'Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"' >> installer.nsi
+          echo 'OutFile "setup.exe"' >> installer.nsi
+          echo 'InstallDir "$PROGRAMFILES\EdgeLLMBase"' >> installer.nsi
+          echo '' >> installer.nsi
+          echo '# --- 添加页面 ---' >> installer.nsi
+          echo 'Page components' >> installer.nsi
+          echo 'Page directory' >> installer.nsi
+          echo 'Page instfiles' >> installer.nsi
+          echo '' >> installer.nsi
+          echo 'ShowInstDetails show' >> installer.nsi
+          echo '' >> installer.nsi
+          echo 'Section "MainSection" SEC01' >> installer.nsi
+          echo '  SetOutPath "$INSTDIR"' >> installer.nsi
+          echo '  SetOverwrite ifnewer' >> installer.nsi
           echo '  File /r "dist\edge_llm_base\*"' >> installer.nsi
-          # ...
+          echo '  CreateDirectory "$SMPROGRAMS\Edge LLM Base"' >> installer.nsi
+          echo '  CreateShortCut "$SMPROGRAMS\Edge LLM Base\Edge LLM Base.lnk" "$INSTDIR\edge_llm_base.exe"' >> installer.nsi
+          echo '  CreateShortCut "$DESKTOP\Edge LLM Base.lnk" "$INSTDIR\edge_llm_base.exe"' >> installer.nsi
+          echo 'SectionEnd' >> installer.nsi
+          echo '' >> installer.nsi
+          echo 'Section -Post' >> installer.nsi
+          echo '  WriteUninstaller "$INSTDIR\uninstall.exe"' >> installer.nsi
+          echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "DisplayName" "${PRODUCT_NAME}"' >> installer.nsi
+          echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "UninstallString" "$INSTDIR\uninstall.exe"' >> installer.nsi
+          echo 'SectionEnd' >> installer.nsi
+          echo '' >> installer.nsi
+          echo 'Section "Uninstall"' >> installer.nsi
           echo '  RMDir /r "$INSTDIR"' >> installer.nsi
-          # ...
+          echo '  Delete "$SMPROGRAMS\Edge LLM Base\Edge LLM Base.lnk"' >> installer.nsi
+          echo '  Delete "$DESKTOP\Edge LLM Base.lnk"' >> installer.nsi
+          echo '  RMDir "$SMPROGRAMS\Edge LLM Base"' >> installer.nsi
+          echo '  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"' >> installer.nsi
           echo 'SectionEnd' >> installer.nsi
       - name: Build NSIS installer
         run: makensis installer.nsi
@@ -53,6 +81,7 @@ jobs:
           name: windows-installer
           path: setup.exe
 
+  # Linux 部分保持不变，因为它们不受 NSIS 影响
   build-linux-x86:
     runs-on: ubuntu-latest
     steps:
@@ -68,7 +97,6 @@ jobs:
           sudo gem install fpm
           pip install llama-cpp-python[server] pystray pillow pyinstaller
       
-      # 关键改动: 使用 --add-binary 强制打包 python 解释器
       - name: Build PyInstaller executable
         run: |
           python_path=$(which python)
@@ -120,7 +148,6 @@ jobs:
               gem install fpm
               pip install llama-cpp-python[server] pystray pillow pyinstaller --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
               
-              # 关键改动: 使用 --add-binary 强制打包 python 解释器
               python_path=\$(which python3)
               pyinstaller --onedir --name edge_llm_base \
                 --hidden-import=llama_cpp.server \
