@@ -9,16 +9,15 @@ import sys
 import multiprocessing
 
 def get_resource_path(relative_path):
-    """ 获取资源的绝对路径，兼容开发环境和 PyInstaller 打包环境 """
-    if hasattr(sys, '_MEIPASS'):
-        # PyInstaller 创建的临时文件夹
-        base_path = sys._MEIPASS
-    else:
-        base_path = os.path.abspath(".")
+    """ 在 onedir 模式下，获取资源的绝对路径 """
+    # sys.executable 是指 edge_llm_base.exe
+    # os.path.dirname(sys.executable) 就是它所在的文件夹
+    base_path = os.path.dirname(sys.executable)
     return os.path.join(base_path, relative_path)
 
 # --- 配置 ---
 MODEL_NAME = "qwen3-0.6b-q4.gguf"
+# 在 onedir 模式下，模型和 exe 在同一个文件夹里
 MODEL_PATH = get_resource_path(MODEL_NAME)
 PORT = 56565
 HOST = "127.0.0.1"
@@ -34,10 +33,15 @@ def start_server():
     
     # 获取“启动器脚本”的路径
     runner_script_path = get_resource_path("server_runner.py")
+    
+    # 【关键】我们不再使用 sys.executable (它指向主程序)
+    # 而是直接调用 python.exe (或 python)，它和主程序在同一个文件夹里
+    python_exe = "python.exe" if sys.platform == "win32" else "python"
+    python_path = get_resource_path(python_exe)
 
-    # 创建完整的命令，包含所有参数
+
     cmd = [
-        sys.executable,
+        python_path, # <-- 使用文件夹内的 python 解释器
         runner_script_path,
         "--model", MODEL_PATH,
         "--port", str(PORT),
@@ -45,7 +49,6 @@ def start_server():
         "--n_gpu_layers", "-1"
     ]
     
-    # 在 Windows 上隐藏子进程的控制台窗口
     creationflags = 0
     if sys.platform == "win32":
         creationflags = subprocess.CREATE_NO_WINDOW
@@ -71,24 +74,17 @@ def on_exit(icon, item):
 
 def setup(icon):
     icon.visible = True
-    # 在一个独立的线程中启动服务器，防止阻塞 UI
     threading.Thread(target=start_server, daemon=True).start()
 
-# --- 主程序入口 ---
 if __name__ == '__main__':
-    # 在 Windows 打包程序中，这行代码是好习惯
     multiprocessing.freeze_support()
 
-    # 创建图标
     image = Image.new('RGB', (64, 64), color=(73, 109, 137))
     icon = pystray.Icon("Edge LLM Base", image, "Edge LLM Base")
 
-    # 定义菜单
     icon.menu = pystray.Menu(
         item('Start Server', lambda: threading.Thread(target=start_server).start(), enabled=lambda _: not running),
         item('Stop Server', stop_server, enabled=lambda _: running),
         item('Exit', on_exit)
     )
-
-    # 运行托盘
     icon.run(setup)
