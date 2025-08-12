@@ -19,14 +19,14 @@ jobs:
       # 我们使用 --hidden-import 来确保 FastAPI 和 Uvicorn 的所有依赖被正确打包。
       - name: Build PyInstaller executable
         run: |
-          pyinstaller --onedir --windowed --name edge_llm_base ^
-            --hidden-import=uvicorn.lifespan.on ^
-            --hidden-import=uvicorn.loops.auto ^
-            --hidden-import=uvicorn.protocols.http.auto ^
-            --hidden-import=uvicorn.protocols.websockets.auto ^
-            --hidden-import=fastapi ^
-            --hidden-import=sse_starlette ^
-            --hidden-import=pydantic_settings ^
+          pyinstaller --onedir --windowed --name edge_llm_base `
+            --hidden-import=uvicorn.lifespan.on `
+            --hidden-import=uvicorn.loops.auto `
+            --hidden-import=uvicorn.protocols.http.auto `
+            --hidden-import=uvicorn.protocols.websockets.auto `
+            --hidden-import=fastapi `
+            --hidden-import=sse_starlette `
+            --hidden-import=pydantic_settings `
             edge_llm_base.py
 
       # 2. 准备打包目录，现在只需要复制模型文件。
