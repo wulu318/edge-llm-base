@@ -15,25 +15,67 @@ jobs:
         run: |
           pip install llama-cpp-python[server] pystray pillow pyinstaller
       
-      # 使用 --add-binary 强制打包 python.exe
-      - name: Build PyInstaller executable
-        shell: pwsh
-        run: |
-          $pythonPath = (Get-Command python).Source
-          pyinstaller --onedir --windowed --name edge_llm_base `
-            --hidden-import=llama_cpp.server `
-            --add-binary "$pythonPath;." `
-            edge_llm_base.py
+      - name: Download model
+        run: Invoke-WebRequest -Uri https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -OutFile qwen3-0.6b-q4.gguf
 
-      - name: Prepare build directory
+      # 关键改动: 使用 cat <<EOF 保证缩进正确
+      - name: Create build.spec file
+        shell: bash # 统一使用 bash 以便使用 cat
         run: |
-          Invoke-WebRequest -Uri https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -OutFile dist/edge_llm_base/qwen3-0.6b-q4.gguf
-          Copy-Item server_runner.py -Destination dist/edge_llm_base/
-      
+          # 在 Windows runner 上，需要用 cygpath 转换路径并转义反斜杠
+          pythonPath=$(cygpath -w $(which python) | sed 's/\\/\\\\/g')
+          
+          cat > build.spec <<EOF
+# build.spec
+import sys
+a = Analysis(
+    ['edge_llm_base.py'],
+    pathex=[],
+    binaries=[('$pythonPath', '.')],
+    datas=[
+        ('server_runner.py', '.'),
+        ('qwen3-0.6b-q4.gguf', '.')
+    ],
+    hiddenimports=['llama_cpp.server'],
+    hookspath=[],
+    runtime_hooks=[],
+    excludes=[],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    noarchive=False
+)
+pyz = PYZ(a.pure, a.zipped_data)
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name='edge_llm_base',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=False, # 对应 --windowed
+    icon=None
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='edge_llm_base'
+)
+EOF
+
+      - name: Build PyInstaller executable from spec
+        run: pyinstaller build.spec
+
       - name: Install NSIS
         run: choco install nsis -y
       
-      # 关键改动: 完整、正确的 NSIS 脚本生成逻辑
       - name: Create NSIS installer script
         run: |
           echo '!define PRODUCT_NAME "Edge LLM Base"' > installer.nsi
@@ -43,14 +85,10 @@ jobs:
           echo 'Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"' >> installer.nsi
           echo 'OutFile "setup.exe"' >> installer.nsi
           echo 'InstallDir "$PROGRAMFILES\EdgeLLMBase"' >> installer.nsi
-          echo '' >> installer.nsi
-          echo '# --- 添加页面 ---' >> installer.nsi
           echo 'Page components' >> installer.nsi
           echo 'Page directory' >> installer.nsi
           echo 'Page instfiles' >> installer.nsi
-          echo '' >> installer.nsi
           echo 'ShowInstDetails show' >> installer.nsi
-          echo '' >> installer.nsi
           echo 'Section "MainSection" SEC01' >> installer.nsi
           echo '  SetOutPath "$INSTDIR"' >> installer.nsi
           echo '  SetOverwrite ifnewer' >> installer.nsi
@@ -59,13 +97,11 @@ jobs:
           echo '  CreateShortCut "$SMPROGRAMS\Edge LLM Base\Edge LLM Base.lnk" "$INSTDIR\edge_llm_base.exe"' >> installer.nsi
           echo '  CreateShortCut "$DESKTOP\Edge LLM Base.lnk" "$INSTDIR\edge_llm_base.exe"' >> installer.nsi
           echo 'SectionEnd' >> installer.nsi
-          echo '' >> installer.nsi
           echo 'Section -Post' >> installer.nsi
           echo '  WriteUninstaller "$INSTDIR\uninstall.exe"' >> installer.nsi
           echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "DisplayName" "${PRODUCT_NAME}"' >> installer.nsi
           echo '  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "UninstallString" "$INSTDIR\uninstall.exe"' >> installer.nsi
           echo 'SectionEnd' >> installer.nsi
-          echo '' >> installer.nsi
           echo 'Section "Uninstall"' >> installer.nsi
           echo '  RMDir /r "$INSTDIR"' >> installer.nsi
           echo '  Delete "$SMPROGRAMS\Edge LLM Base\Edge LLM Base.lnk"' >> installer.nsi
@@ -81,7 +117,6 @@ jobs:
           name: windows-installer
           path: setup.exe
 
-  # Linux 部分保持不变，因为它们不受 NSIS 影响
   build-linux-x86:
     runs-on: ubuntu-latest
     steps:
@@ -97,18 +132,26 @@ jobs:
           sudo gem install fpm
           pip install llama-cpp-python[server] pystray pillow pyinstaller
       
-      - name: Build PyInstaller executable
+      - name: Download model
+        run: wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O qwen3-0.6b-q4.gguf
+
+      # 关键改动: 使用 cat <<EOF 保证缩进正确
+      - name: Create and Build from .spec file
         run: |
           python_path=$(which python)
-          pyinstaller --onedir --name edge_llm_base \
-            --hidden-import=llama_cpp.server \
-            --add-binary "$python_path:." \
-            edge_llm_base.py
-      
-      - name: Prepare build directory
-        run: |
-          wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O dist/edge_llm_base/qwen3-0.6b-q4.gguf
-          cp server_runner.py dist/edge_llm_base/
+          cat > build.spec <<EOF
+# build.spec
+a = Analysis(
+    ['edge_llm_base.py'],
+    binaries=[('$python_path', '.')],
+    datas=[('server_runner.py', '.'), ('qwen3-0.6b-q4.gguf', '.')],
+    hiddenimports=['llama_cpp.server']
+)
+pyz = PYZ(a.pure, a.zipped_data)
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='edge_llm_base', debug=False, console=False)
+coll = COLLECT(exe, a.binaries, a.zipfiles, a.datas, name='edge_llm_base')
+EOF
+          pyinstaller build.spec
       
       - name: Create post-install script for fpm
         run: |
@@ -148,14 +191,23 @@ jobs:
               gem install fpm
               pip install llama-cpp-python[server] pystray pillow pyinstaller --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
               
-              python_path=\$(which python3)
-              pyinstaller --onedir --name edge_llm_base \
-                --hidden-import=llama_cpp.server \
-                --add-binary \"\$python_path:.\" \
-                edge_llm_base.py
+              wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O qwen3-0.6b-q4.gguf
               
-              wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O dist/edge_llm_base/qwen3-0.6b-q4.gguf
-              cp server_runner.py dist/edge_llm_base/
+              # 关键改动: 使用 cat <<EOF 保证缩进正确
+              python_path=\$(which python3)
+              cat > build.spec <<EOF
+# build.spec
+a = Analysis(
+    ['edge_llm_base.py'],
+    binaries=[('\$python_path', '.')],
+    datas=[('server_runner.py', '.'), ('qwen3-0.6b-q4.gguf', '.')],
+    hiddenimports=['llama_cpp.server']
+)
+pyz = PYZ(a.pure, a.zipped_data)
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='edge_llm_base', debug=False, console=False)
+coll = COLLECT(exe, a.binaries, a.zipfiles, a.datas, name='edge_llm_base')
+EOF
+              pyinstaller build.spec
 
               echo '#!/bin/sh' > post-install.sh
               echo 'ln -sf /opt/edge-llm-base/edge_llm_base /usr/local/bin/edge_llm_base' >> post-install.sh
