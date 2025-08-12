@@ -18,58 +18,11 @@ jobs:
       - name: Download model
         run: Invoke-WebRequest -Uri https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -OutFile qwen3-0.6b-q4.gguf
 
-      # 关键改动: 使用 cat <<EOF 保证缩进正确
+      # 1. 运行 Python 脚本来生成 .spec 文件
       - name: Create build.spec file
-        shell: bash # 统一使用 bash 以便使用 cat
-        run: |
-          # 在 Windows runner 上，需要用 cygpath 转换路径并转义反斜杠
-          pythonPath=$(cygpath -w $(which python) | sed 's/\\/\\\\/g')
-          
-          cat > build.spec <<EOF
-# build.spec
-import sys
-a = Analysis(
-    ['edge_llm_base.py'],
-    pathex=[],
-    binaries=[('$pythonPath', '.')],
-    datas=[
-        ('server_runner.py', '.'),
-        ('qwen3-0.6b-q4.gguf', '.')
-    ],
-    hiddenimports=['llama_cpp.server'],
-    hookspath=[],
-    runtime_hooks=[],
-    excludes=[],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    noarchive=False
-)
-pyz = PYZ(a.pure, a.zipped_data)
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
-    name='edge_llm_base',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    console=False, # 对应 --windowed
-    icon=None
-)
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='edge_llm_base'
-)
-EOF
+        run: python create_spec.py
 
+      # 2. 使用生成的 .spec 文件进行编译
       - name: Build PyInstaller executable from spec
         run: pyinstaller build.spec
 
@@ -135,22 +88,9 @@ EOF
       - name: Download model
         run: wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O qwen3-0.6b-q4.gguf
 
-      # 关键改动: 使用 cat <<EOF 保证缩进正确
       - name: Create and Build from .spec file
         run: |
-          python_path=$(which python)
-          cat > build.spec <<EOF
-# build.spec
-a = Analysis(
-    ['edge_llm_base.py'],
-    binaries=[('$python_path', '.')],
-    datas=[('server_runner.py', '.'), ('qwen3-0.6b-q4.gguf', '.')],
-    hiddenimports=['llama_cpp.server']
-)
-pyz = PYZ(a.pure, a.zipped_data)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='edge_llm_base', debug=False, console=False)
-coll = COLLECT(exe, a.binaries, a.zipfiles, a.datas, name='edge_llm_base')
-EOF
+          python create_spec.py
           pyinstaller build.spec
       
       - name: Create post-install script for fpm
@@ -193,20 +133,7 @@ EOF
               
               wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O qwen3-0.6b-q4.gguf
               
-              # 关键改动: 使用 cat <<EOF 保证缩进正确
-              python_path=\$(which python3)
-              cat > build.spec <<EOF
-# build.spec
-a = Analysis(
-    ['edge_llm_base.py'],
-    binaries=[('\$python_path', '.')],
-    datas=[('server_runner.py', '.'), ('qwen3-0.6b-q4.gguf', '.')],
-    hiddenimports=['llama_cpp.server']
-)
-pyz = PYZ(a.pure, a.zipped_data)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='edge_llm_base', debug=False, console=False)
-coll = COLLECT(exe, a.binaries, a.zipfiles, a.datas, name='edge_llm_base')
-EOF
+              python3 create_spec.py
               pyinstaller build.spec
 
               echo '#!/bin/sh' > post-install.sh
