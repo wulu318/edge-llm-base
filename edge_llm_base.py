@@ -6,6 +6,7 @@ from pystray import MenuItem as item
 from PIL import Image
 import sys
 import multiprocessing
+import logging
 
 # --- 关键改动: 导入服务器和配置工具 ---
 # 这些库会被 PyInstaller 通过 .spec 文件正确识别并打包
@@ -29,19 +30,19 @@ LOG_FILE_PATH = get_log_file_path()
 
 def get_resource_path(relative_path):
     """
-    获取资源的绝对路径。在 onedir 模式下，所有文件都在 .exe 旁边。
+    获取资源的绝对路径。在 onedir 模式下，所有文件都在 _internal 文件夹中。
     """
     if getattr(sys, 'frozen', False):
-        # 程序被打包后
-        base_path = os.path.dirname(sys.executable)
+        # 关键修正: 程序被打包后，所有依赖项都在 _internal 子文件夹中。
+        base_path = os.path.join(os.path.dirname(sys.executable), '_internal')
     else:
-        # 从 .py 脚本运行
+        # 程序未被打包 (从 .py 脚本运行)
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
 # --- 配置 ---
 MODEL_NAME = "qwen3-0.6b-q4.gguf"
-MODEL_PATH = get_resource_path(MODEL_NAME)
+MODEL_PATH = get_resource_path(MODEL_NAME) # 现在这个路径会正确地指向 _internal
 PORT = 56565
 HOST = "127.0.0.1"
 
@@ -80,20 +81,52 @@ def start_server():
         write_log("--- 准备启动服务器 (线程模式) ---")
         write_log(f"模型路径: {MODEL_PATH}")
         if not os.path.exists(MODEL_PATH):
-            write_log(f"致命错误: 模型文件未找到!")
+            write_log(f"致命错误: 模型文件在路径 {MODEL_PATH} 未找到!")
             return
 
         settings = Settings(model=MODEL_PATH, port=PORT, host=HOST, n_gpu_layers=-1)
         app = create_app(settings=settings)
-        config = uvicorn.Config(app, host=HOST, port=PORT, log_level="info")
+        
+        # 关键修正: 为 uvicorn 提供一个明确的日志配置，以解决打包后的 formatter 错误
+        LOGGING_CONFIG = {
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "default": {
+                    "()": "uvicorn.logging.DefaultFormatter",
+                    "fmt": "%(levelprefix)s %(message)s",
+                },
+                "access": {
+                    "()": "uvicorn.logging.AccessFormatter",
+                    "fmt": '%(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',
+                },
+            },
+            "handlers": {
+                "default": {
+                    "formatter": "default",
+                    "class": "logging.StreamHandler",
+                    "stream": "ext://sys.stderr",
+                },
+                "access": {
+                    "formatter": "access",
+                    "class": "logging.StreamHandler",
+                    "stream": "ext://sys.stdout",
+                },
+            },
+            "loggers": {
+                "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+                "uvicorn.error": {"level": "INFO"},
+                "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+            },
+        }
+        
+        config = uvicorn.Config(app, host=HOST, port=PORT, log_level="info", log_config=LOGGING_CONFIG)
         
         server = uvicorn.Server(config)
         
         running = True
         write_log(f"服务器准备在 http://{HOST}:{PORT} 启动")
         
-        # uvicorn 的日志会直接打印到控制台，打包后我们需要重定向它
-        # 但在这个架构下，我们暂时依赖 uvicorn 自身的日志能力
         server.run()
         
         running = False
