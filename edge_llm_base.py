@@ -16,7 +16,6 @@ def get_log_file_path():
         os.makedirs(log_dir, exist_ok=True)
         return os.path.join(log_dir, "edge_llm_base_log.txt")
     except Exception:
-        # Fallback to the executable's directory if the user's home is not writable
         if getattr(sys, 'frozen', False):
             return os.path.join(os.path.dirname(sys.executable), "edge_llm_base_log.txt")
         else:
@@ -28,17 +27,28 @@ def get_resource_path(relative_path):
     """
     获取资源的绝对路径，对开发环境和 PyInstaller 的 onedir 模式都有效。
     """
-    if getattr(sys, 'frozen', False):
-        base_path = os.path.dirname(sys.executable)
-    else:
-        base_path = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base_path, relative_path)
+    try:
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            # onefile 模式 (虽然我们现在不用，但保留以增加健壮性)
+            base_path = sys._MEIPASS
+        elif getattr(sys, 'frozen', False):
+            # onedir 模式
+            # sys.executable 是指 C:\...\EdgeLLMBase\edge_llm_base.exe
+            # 所有依赖项都在 _internal 子文件夹中
+            base_path = os.path.join(os.path.dirname(sys.executable), "_internal")
+        else:
+            # 程序未被打包 (从 .py 脚本运行)
+            base_path = os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(base_path, relative_path)
+    except Exception as e:
+        write_log(f"获取资源路径时出错: {e}")
+        return None
+
 
 # --- 配置 ---
 MODEL_NAME = "qwen3-0.6b-q4.gguf"
-MODEL_PATH = get_resource_path(MODEL_NAME)
 PORT = 56565
-HOST = "0.0.0.0"
+HOST = "127.0.0.1"
 
 # --- 全局变量 ---
 server_process = None
@@ -63,12 +73,19 @@ def start_server():
     write_log("--- 准备启动服务器 ---")
     
     python_exe_name = "python.exe" if sys.platform == "win32" else "python"
+    
+    # 使用修正后的路径查找逻辑
     python_path = get_resource_path(python_exe_name)
     runner_script_path = get_resource_path("server_runner.py")
+    model_path = get_resource_path(MODEL_NAME)
 
     write_log(f"期望的 Python 解释器路径: {python_path}")
     write_log(f"期望的启动器脚本路径: {runner_script_path}")
-    write_log(f"期望的模型路径: {MODEL_PATH}")
+    write_log(f"期望的模型路径: {model_path}")
+
+    if not all([python_path, runner_script_path, model_path]):
+        write_log("致命错误: 无法获取所有必要的资源路径。")
+        return
 
     if not os.path.exists(python_path):
         write_log(f"致命错误: 未找到 Python 解释器。")
@@ -76,14 +93,14 @@ def start_server():
     if not os.path.exists(runner_script_path):
         write_log(f"致命错误: 未找到启动器脚本。")
         return
-    if not os.path.exists(MODEL_PATH):
+    if not os.path.exists(model_path):
         write_log(f"致命错误: 未找到模型文件。")
         return
 
     cmd = [
         python_path,
         runner_script_path,
-        "--model", MODEL_PATH,
+        "--model", model_path,
         "--port", str(PORT),
         "--host", HOST,
         "--n_gpu_layers", "-1"
@@ -150,7 +167,7 @@ if __name__ == '__main__':
     write_log(f"--- 主程序入口 --- 日志将写入到: {LOG_FILE_PATH}")
     if getattr(sys, 'frozen', False):
         write_log(f"程序已打包. sys.executable: {sys.executable}")
-        write_log(f"资源根目录: {os.path.dirname(sys.executable)}")
+        write_log(f"资源根目录 (推测): {os.path.join(os.path.dirname(sys.executable), '_internal')}")
 
     image = Image.new('RGB', (64, 64), color=(73, 109, 137))
     icon = pystray.Icon("Edge LLM Base", image, "Edge LLM Base")
