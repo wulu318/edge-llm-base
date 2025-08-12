@@ -8,6 +8,17 @@ from PIL import Image
 import sys
 import multiprocessing
 
+# --- 决定性的修复: 重新定义路径获取逻辑 ---
+
+# 首先，一次性地、清晰地确定我们的程序资源根目录 (BASE_DIR) 在哪里。
+if getattr(sys, 'frozen', False):
+    # 如果程序被打包了，所有依赖项都在 _internal 子文件夹中。
+    # sys.executable 是指 C:\...\EdgeLLMBase\edge_llm_base.exe
+    BASE_DIR = os.path.join(os.path.dirname(sys.executable), '_internal')
+else:
+    # 如果是从 .py 脚本运行（开发环境），资源就在脚本旁边。
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 def get_log_file_path():
     """获取一个保证可写的日志文件路径。"""
     try:
@@ -16,24 +27,13 @@ def get_log_file_path():
         os.makedirs(log_dir, exist_ok=True)
         return os.path.join(log_dir, "edge_llm_base_log.txt")
     except Exception:
+        # Fallback
         if getattr(sys, 'frozen', False):
             return os.path.join(os.path.dirname(sys.executable), "edge_llm_base_log.txt")
         else:
             return "edge_llm_base_log.txt"
 
 LOG_FILE_PATH = get_log_file_path()
-
-def get_resource_path(relative_path):
-    """
-    获取资源的绝对路径，对开发环境和 PyInstaller 的 onedir 模式都有效。
-    """
-    if getattr(sys, 'frozen', False):
-        # 关键修正: 程序被打包后，所有依赖项都在 _internal 子文件夹中。
-        base_path = os.path.join(os.path.dirname(sys.executable), '_internal')
-    else:
-        # 程序未被打包 (从 .py 脚本运行)
-        base_path = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base_path, relative_path)
 
 # --- 配置 ---
 MODEL_NAME = "qwen3-0.6b-q4.gguf"
@@ -64,15 +64,15 @@ def start_server():
     
     python_exe_name = "python.exe" if sys.platform == "win32" else "python"
     
-    # 获取所有必要的路径
-    base_dir = get_resource_path('.') 
-    python_path = os.path.join(base_dir, python_exe_name)
-    runner_script_path = os.path.join(base_dir, "server_runner.py")
-    model_path = os.path.join(base_dir, MODEL_NAME)
+    # 使用确定的 BASE_DIR 来构建所有路径，不再有额外的 "."
+    python_path = os.path.join(BASE_DIR, python_exe_name)
+    runner_script_path = os.path.join(BASE_DIR, "server_runner.py")
+    model_path = os.path.join(BASE_DIR, MODEL_NAME)
 
-    write_log(f"程序资源根目录 (base_dir): {base_dir}")
+    write_log(f"程序资源根目录 (BASE_DIR): {BASE_DIR}")
     write_log(f"期望的 Python 解释器路径: {python_path}")
     write_log(f"期望的启动器脚本路径: {runner_script_path}")
+    write_log(f"期望的模型路径: {model_path}")
 
     if not os.path.exists(python_path):
         write_log(f"致命错误: 未找到 Python 解释器。")
@@ -88,9 +88,9 @@ def start_server():
     ]
     
     env = os.environ.copy()
-    env["PYTHONHOME"] = base_dir
-    env["PYTHONPATH"] = base_dir
-    write_log(f"为子进程设置 PYTHONHOME: {base_dir}")
+    env["PYTHONHOME"] = BASE_DIR
+    env["PYTHONPATH"] = BASE_DIR
+    write_log(f"为子进程设置 PYTHONHOME: {BASE_DIR}")
 
     creationflags = 0
     if sys.platform == "win32":
