@@ -1,38 +1,63 @@
 # 文件名: create_spec.py
-# 这个脚本用于生成 PyInstaller 的 .spec 配置文件，以确保打包过程的稳定性和可重复性。
+# 这个脚本用于生成一个精确的 .spec 配置文件，以解决 C++ 库打包失败的问题。
 
 import sys
 import os
+import site
 
-# 获取当前 Python 环境中解释器的绝对路径。
-# 这是最可靠的方法，可以避免在不同操作系统或 shell 中进行复杂的路径转换。
-python_executable_path = sys.executable
+def find_package_path(package_name):
+    """在 Python 环境中查找已安装包的路径。"""
+    paths = site.getsitepackages()
+    if site.getusersitepackages() and site.getusersitepackages() not in paths:
+        paths.append(site.getusersitepackages())
+    
+    for site_dir in paths:
+        potential_path = os.path.join(site_dir, package_name)
+        if os.path.isdir(potential_path):
+            return potential_path
+    raise FileNotFoundError(f"无法找到包: '{package_name}'")
 
-# 在 Windows 系统上，路径中的反斜杠在 .spec 文件中需要被转义。
-if sys.platform == "win32":
-    python_executable_path = python_executable_path.replace('\\', '\\\\')
+try:
+    # 1. 自动查找 llama_cpp 包的安装路径
+    llama_cpp_path = find_package_path('llama_cpp')
+    print(f"成功找到 llama_cpp 包路径: {llama_cpp_path}")
 
-# 使用 f-string 定义 .spec 文件的内容模板。
-# 这样做比用 echo 或 cat 命令更清晰、更不容易出错。
-spec_content = f"""
+    # 2. 构建其内部 lib 目录的路径
+    llama_cpp_lib_path = os.path.join(llama_cpp_path, 'lib')
+    
+    # 3. 检查 lib 目录是否存在，这是关键一步
+    if not os.path.isdir(llama_cpp_lib_path):
+        raise FileNotFoundError(f"在 {llama_cpp_path} 中未找到必需的 'lib' 文件夹!")
+
+    # 4. 创建 PyInstaller 需要的 (源路径, 目标路径) 元组
+    # 我们要将 llama_cpp/lib 文件夹，完整地复制到打包目录下的 llama_cpp/lib
+    llama_lib_data_tuple = (llama_cpp_lib_path, 'llama_cpp/lib')
+
+    # 5. 使用 f-string 定义 .spec 文件的内容模板
+    spec_content = f"""
 # -*- mode: python ; coding: utf-8 -*-
-#
-# 这个 .spec 文件是由 create_spec.py 自动生成的。
+# 由 create_spec.py 自动生成
 
-# Analysis 块负责分析所有依赖项。
+# Analysis 块负责分析所有依赖项
 a = Analysis(
     ['edge_llm_base.py'],
     pathex=[],
-    # binaries: 强制包含二进制文件，如 python.exe。
-    # 格式为 (源路径, 在输出文件夹中的目标位置)
-    binaries=[('{python_executable_path}', '.')],
-    # datas: 包含非二进制的数据文件，如模型和我们的启动器脚本。
+    binaries=[],
+    # datas: 包含非二进制的数据文件
     datas=[
-        ('server_runner.py', '.'),
-        ('qwen3-0.6b-q4.gguf', '.')
+        ('qwen3-0.6b-q4.gguf', '.'),
+        {repr(llama_lib_data_tuple)}  # <-- 决定性的修复！
     ],
-    # hiddenimports: 强制包含 PyInstaller 可能因静态分析而遗漏的库。
-    hiddenimports=['llama_cpp.server'],
+    # hiddenimports: 强制包含 PyInstaller 可能找不到的库
+    hiddenimports=[
+        'uvicorn.lifespan.on',
+        'uvicorn.loops.auto',
+        'uvicorn.protocols.http.auto',
+        'uvicorn.protocols.websockets.auto',
+        'fastapi',
+        'sse_starlette',
+        'pydantic_settings'
+    ],
     hookspath=[],
     runtime_hooks=[],
     excludes=[],
@@ -42,7 +67,7 @@ a = Analysis(
 )
 pyz = PYZ(a.pure, a.zipped_data)
 
-# EXE 块定义了最终生成的可执行文件的属性。
+# EXE 块定义了最终生成的可执行文件的属性
 exe = EXE(
     pyz,
     a.scripts,
@@ -53,11 +78,11 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False, # 对应 --windowed，不显示控制台窗口
+    console=False, # 对应 --windowed
     icon=None
 )
 
-# COLLECT 块负责将所有分析出的文件收集到一个文件夹中（onedir 模式）。
+# COLLECT 块负责将所有分析出的文件收集到一个文件夹中
 coll = COLLECT(
     exe,
     a.binaries,
@@ -70,11 +95,11 @@ coll = COLLECT(
 )
 """
 
-# 将生成的内容写入 build.spec 文件。
-try:
+    # 6. 将生成的内容写入 build.spec 文件
     with open('build.spec', 'w', encoding='utf-8') as f:
         f.write(spec_content)
-    print("build.spec file created successfully.")
-except IOError as e:
-    print(f"Error writing build.spec file: {e}")
+    print("build.spec 文件已成功创建，并包含了 llama_cpp/lib 的路径。")
+
+except Exception as e:
+    print(f"创建 .spec 文件时发生错误: {e}")
     sys.exit(1)

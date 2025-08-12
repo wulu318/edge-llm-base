@@ -15,25 +15,17 @@ jobs:
         run: |
           pip install llama-cpp-python[server] pystray pillow pyinstaller
       
-      # 1. 编译。我们不再需要 server_runner.py 或 create_spec.py。
-      # 我们使用 --hidden-import 来确保 FastAPI 和 Uvicorn 的所有依赖被正确打包。
-      - name: Build PyInstaller executable
-        run: |
-          pyinstaller --onedir --windowed --name edge_llm_base `
-            --hidden-import=uvicorn.lifespan.on `
-            --hidden-import=uvicorn.loops.auto `
-            --hidden-import=uvicorn.protocols.http.auto `
-            --hidden-import=uvicorn.protocols.websockets.auto `
-            --hidden-import=fastapi `
-            --hidden-import=sse_starlette `
-            --hidden-import=pydantic_settings `
-            edge_llm_base.py
+      - name: Download model
+        run: Invoke-WebRequest -Uri https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -OutFile qwen3-0.6b-q4.gguf
 
-      # 2. 准备打包目录，现在只需要复制模型文件。
-      - name: Prepare build directory
-        run: |
-          Invoke-WebRequest -Uri https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -OutFile dist/edge_llm_base/qwen3-0.6b-q4.gguf
-      
+      # 1. 运行 Python 脚本来生成 .spec 文件
+      - name: Create build.spec file
+        run: python create_spec.py
+
+      # 2. 使用生成的 .spec 文件进行编译
+      - name: Build PyInstaller executable from spec
+        run: pyinstaller build.spec
+
       - name: Install NSIS
         run: choco install nsis -y
       
@@ -78,7 +70,6 @@ jobs:
           name: windows-installer
           path: setup.exe
 
-  # Linux 部分也同样简化
   build-linux-x86:
     runs-on: ubuntu-latest
     steps:
@@ -94,21 +85,13 @@ jobs:
           sudo gem install fpm
           pip install llama-cpp-python[server] pystray pillow pyinstaller
       
-      - name: Build PyInstaller executable
+      - name: Download model
+        run: wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O qwen3-0.6b-q4.gguf
+
+      - name: Create and Build from .spec file
         run: |
-          pyinstaller --onedir --name edge_llm_base \
-            --hidden-import=uvicorn.lifespan.on \
-            --hidden-import=uvicorn.loops.auto \
-            --hidden-import=uvicorn.protocols.http.auto \
-            --hidden-import=uvicorn.protocols.websockets.auto \
-            --hidden-import=fastapi \
-            --hidden-import=sse_starlette \
-            --hidden-import=pydantic_settings \
-            edge_llm_base.py
-      
-      - name: Prepare build directory
-        run: |
-          wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O dist/edge_llm_base/qwen3-0.6b-q4.gguf
+          python create_spec.py
+          pyinstaller build.spec
       
       - name: Create post-install script for fpm
         run: |
@@ -148,17 +131,10 @@ jobs:
               gem install fpm
               pip install llama-cpp-python[server] pystray pillow pyinstaller --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
               
-              pyinstaller --onedir --name edge_llm_base \
-                --hidden-import=uvicorn.lifespan.on \
-                --hidden-import=uvicorn.loops.auto \
-                --hidden-import=uvicorn.protocols.http.auto \
-                --hidden-import=uvicorn.protocols.websockets.auto \
-                --hidden-import=fastapi \
-                --hidden-import=sse_starlette \
-                --hidden-import=pydantic_settings \
-                edge_llm_base.py
+              wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O qwen3-0.6b-q4.gguf
               
-              wget https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -O dist/edge_llm_base/qwen3-0.6b-q4.gguf
+              python3 create_spec.py
+              pyinstaller build.spec
 
               echo '#!/bin/sh' > post-install.sh
               echo 'ln -sf /opt/edge-llm-base/edge_llm_base /usr/local/bin/edge_llm_base' >> post-install.sh
