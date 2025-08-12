@@ -18,27 +18,13 @@ jobs:
       - name: Download model
         run: Invoke-WebRequest -Uri https://huggingface.co/a5656789/qwen3-0.6b-q4/resolve/main/qwen3-0.6b-q4.gguf -OutFile qwen3-0.6b-q4.gguf
 
+      # 1. 运行 Python 脚本来生成 .spec 文件
       - name: Create build.spec file
         run: python create_spec.py
 
+      # 2. 使用生成的 .spec 文件进行编译
       - name: Build PyInstaller executable from spec
         run: pyinstaller build.spec
-
-      # 【最关键的改动】手动将 Python 解释器和核心 DLL 复制到输出目录
-      - name: Manually copy Python interpreter and dependencies
-        shell: pwsh
-        run: |
-          $pythonDir = Split-Path (Get-Command python).Source -Parent
-          Write-Host "Python directory is: $pythonDir"
-          Write-Host "Copying python.exe..."
-          Copy-Item (Join-Path $pythonDir "python.exe") -Destination "dist/edge_llm_base/"
-          Write-Host "Copying python3.dll..."
-          Copy-Item (Join-Path $pythonDir "python3.dll") -Destination "dist/edge_llm_base/"
-          Write-Host "Copying python312.dll (if exists)..."
-          Copy-Item (Join-Path $pythonDir "python312.dll") -Destination "dist/edge_llm_base/" -ErrorAction SilentlyContinue
-          Write-Host "Copying vcruntime140.dll (if exists)..."
-          Copy-Item (Join-Path $pythonDir "vcruntime140.dll") -Destination "dist/edge_llm_base/" -ErrorAction SilentlyContinue
-          Write-Host "Interpreter and core DLLs copied."
 
       - name: Install NSIS
         run: choco install nsis -y
@@ -107,10 +93,6 @@ jobs:
           python create_spec.py
           pyinstaller build.spec
       
-      # 【最关键的改动】手动复制解释器
-      - name: Manually copy Python interpreter
-        run: cp $(which python) dist/edge_llm_base/
-
       - name: Create post-install script for fpm
         run: |
           echo '#!/bin/sh' > post-install.sh
@@ -153,9 +135,6 @@ jobs:
               
               python3 create_spec.py
               pyinstaller build.spec
-
-              # 【最关键的改动】手动复制解释器
-              cp \$(which python3) dist/edge_llm_base/
 
               echo '#!/bin/sh' > post-install.sh
               echo 'ln -sf /opt/edge-llm-base/edge_llm_base /usr/local/bin/edge_llm_base' >> post-install.sh
