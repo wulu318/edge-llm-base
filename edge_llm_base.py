@@ -1,5 +1,4 @@
 import os
-import subprocess
 import threading
 import time
 import pystray
@@ -8,16 +7,10 @@ from PIL import Image
 import sys
 import multiprocessing
 
-# --- 决定性的修复: 重新定义路径获取逻辑 ---
-
-# 首先，一次性地、清晰地确定我们的程序资源根目录 (BASE_DIR) 在哪里。
-if getattr(sys, 'frozen', False):
-    # 如果程序被打包了，所有依赖项都在 _internal 子文件夹中。
-    # sys.executable 是指 C:\...\EdgeLLMBase\edge_llm_base.exe
-    BASE_DIR = os.path.join(os.path.dirname(sys.executable), '_internal')
-else:
-    # 如果是从 .py 脚本运行（开发环境），资源就在脚本旁边。
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# --- 关键改动: 导入服务器和配置工具 ---
+# 这些库会被 PyInstaller 通过 .spec 文件正确识别并打包
+import uvicorn
+from llama_cpp.server.app import create_app, Settings
 
 def get_log_file_path():
     """获取一个保证可写的日志文件路径。"""
@@ -27,7 +20,6 @@ def get_log_file_path():
         os.makedirs(log_dir, exist_ok=True)
         return os.path.join(log_dir, "edge_llm_base_log.txt")
     except Exception:
-        # Fallback
         if getattr(sys, 'frozen', False):
             return os.path.join(os.path.dirname(sys.executable), "edge_llm_base_log.txt")
         else:
@@ -35,13 +27,27 @@ def get_log_file_path():
 
 LOG_FILE_PATH = get_log_file_path()
 
+def get_resource_path(relative_path):
+    """
+    获取资源的绝对路径。在 onedir 模式下，所有文件都在 .exe 旁边。
+    """
+    if getattr(sys, 'frozen', False):
+        # 程序被打包后
+        base_path = os.path.dirname(sys.executable)
+    else:
+        # 从 .py 脚本运行
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
 # --- 配置 ---
 MODEL_NAME = "qwen3-0.6b-q4.gguf"
+MODEL_PATH = get_resource_path(MODEL_NAME)
 PORT = 56565
 HOST = "127.0.0.1"
 
 # --- 全局变量 ---
-server_process = None
+server_thread = None
+server = None # 用于持有 uvicorn 服务器实例
 running = False
 
 def write_log(message):
@@ -54,82 +60,66 @@ def write_log(message):
     except Exception as e:
         print(f"写入日志失败: {e}")
 
+def start_server_thread():
+    """这是一个包装函数，用于从菜单启动服务器线程。"""
+    global server_thread
+    if not running and (server_thread is None or not server_thread.is_alive()):
+        write_log("从菜单请求启动服务器...")
+        server_thread = threading.Thread(target=start_server, daemon=True)
+        server_thread.start()
+    else:
+        write_log("服务器已在运行，忽略菜单启动请求。")
+
 def start_server():
-    global server_process, running
+    """在程序内部的一个新线程中，直接启动 uvicorn 服务器。"""
+    global server, running
     if running:
-        write_log("服务器已在运行，忽略启动请求。")
         return
 
-    write_log("--- 准备启动服务器 (subprocess 模式) ---")
-    
-    python_exe_name = "python.exe" if sys.platform == "win32" else "python"
-    
-    # 使用确定的 BASE_DIR 来构建所有路径，不再有额外的 "."
-    python_path = os.path.join(BASE_DIR, python_exe_name)
-    runner_script_path = os.path.join(BASE_DIR, "server_runner.py")
-    model_path = os.path.join(BASE_DIR, MODEL_NAME)
-
-    write_log(f"程序资源根目录 (BASE_DIR): {BASE_DIR}")
-    write_log(f"期望的 Python 解释器路径: {python_path}")
-    write_log(f"期望的启动器脚本路径: {runner_script_path}")
-    write_log(f"期望的模型路径: {model_path}")
-
-    if not os.path.exists(python_path):
-        write_log(f"致命错误: 未找到 Python 解释器。")
-        return
-
-    cmd = [
-        python_path,
-        runner_script_path,
-        "--model", model_path,
-        "--port", str(PORT),
-        "--host", HOST,
-        "--n_gpu_layers", "-1"
-    ]
-    
-    env = os.environ.copy()
-    env["PYTHONHOME"] = BASE_DIR
-    env["PYTHONPATH"] = BASE_DIR
-    write_log(f"为子进程设置 PYTHONHOME: {BASE_DIR}")
-
-    creationflags = 0
-    if sys.platform == "win32":
-        creationflags = subprocess.CREATE_NO_WINDOW
-        
     try:
-        write_log(f"执行命令: {' '.join(cmd)}")
-        log_file_handle = open(LOG_FILE_PATH, "a", encoding="utf-8", buffering=1)
+        write_log("--- 准备启动服务器 (线程模式) ---")
+        write_log(f"模型路径: {MODEL_PATH}")
+        if not os.path.exists(MODEL_PATH):
+            write_log(f"致命错误: 模型文件未找到!")
+            return
+
+        settings = Settings(model=MODEL_PATH, port=PORT, host=HOST, n_gpu_layers=-1)
+        app = create_app(settings=settings)
+        config = uvicorn.Config(app, host=HOST, port=PORT, log_level="info")
         
-        server_process = subprocess.Popen(
-            cmd, 
-            stdout=log_file_handle, 
-            stderr=log_file_handle, 
-            creationflags=creationflags,
-            env=env
-        )
+        server = uvicorn.Server(config)
+        
         running = True
-        write_log(f"服务器子进程已成功启动，进程号: {server_process.pid}")
+        write_log(f"服务器准备在 http://{HOST}:{PORT} 启动")
+        
+        # uvicorn 的日志会直接打印到控制台，打包后我们需要重定向它
+        # 但在这个架构下，我们暂时依赖 uvicorn 自身的日志能力
+        server.run()
+        
+        running = False
+        write_log("服务器已停止。")
+
     except Exception as e:
-        write_log(f"致命错误: 启动子进程失败。 错误信息: {e}")
+        write_log(f"启动服务器时发生致命错误: {e}")
         running = False
 
 def stop_server():
-    global server_process, running
-    if not running or server_process is None:
+    """优雅地停止 uvicorn 服务器。"""
+    global server, running, server_thread
+    if not running or server is None:
+        write_log("服务器未在运行，忽略停止请求。")
         return
     
-    write_log(f"--- 准备停止服务器，进程号: {server_process.pid} ---")
-    server_process.terminate()
-    try:
-        server_process.wait(timeout=5)
-        write_log("服务器进程已成功终止。")
-    except subprocess.TimeoutExpired:
-        write_log("服务器进程在5秒内未响应终止信号，强制结束。")
-        server_process.kill()
-        write_log("服务器进程已被强制结束。")
+    write_log("--- 准备停止服务器 ---")
+    server.should_exit = True
+    
+    if server_thread is not None and server_thread.is_alive():
+        server_thread.join(timeout=5)
     
     running = False
-    server_process = None
+    server = None
+    server_thread = None
+    write_log("服务器停止流程已完成。")
 
 def on_exit(icon, item):
     write_log("程序退出。")
@@ -139,7 +129,7 @@ def on_exit(icon, item):
 def setup(icon):
     write_log("--- 程序初始化 ---")
     icon.visible = True
-    threading.Thread(target=start_server, daemon=True).start()
+    start_server_thread() # 程序启动时自动运行一次
 
 if __name__ == '__main__':
     multiprocessing.freeze_support()
@@ -155,8 +145,9 @@ if __name__ == '__main__':
     image = Image.new('RGB', (64, 64), color=(73, 109, 137))
     icon = pystray.Icon("Edge LLM Base", image, "Edge LLM Base")
 
+    # 恢复完整的右键菜单
     icon.menu = pystray.Menu(
-        item('Start Server', lambda: threading.Thread(target=start_server).start(), enabled=lambda _: not running),
+        item('Start Server', start_server_thread, enabled=lambda _: not running),
         item('Stop Server', stop_server, enabled=lambda _: running),
         item('Exit', on_exit)
     )

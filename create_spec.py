@@ -25,11 +25,12 @@ try:
     # 2. 构建其内部 lib 目录的路径
     llama_cpp_lib_path = os.path.join(llama_cpp_path, 'lib')
     
-    # 3. 检查 lib 目录是否存在
+    # 3. 检查 lib 目录是否存在，这是关键一步
     if not os.path.isdir(llama_cpp_lib_path):
         raise FileNotFoundError(f"Required 'lib' folder not found in {llama_cpp_path}!")
 
     # 4. 创建 PyInstaller 需要的 (源路径, 目标路径) 元组
+    # 我们要将 llama_cpp/lib 文件夹，完整地复制到打包目录下的 llama_cpp/lib
     llama_lib_data_tuple = (llama_cpp_lib_path, 'llama_cpp/lib')
 
     # 5. 使用 f-string 定义 .spec 文件的内容模板
@@ -41,10 +42,12 @@ a = Analysis(
     ['edge_llm_base.py'],
     pathex=[],
     binaries=[],
+    # datas: 包含非二进制的数据文件
     datas=[
         ('qwen3-0.6b-q4.gguf', '.'),
-        {repr(llama_lib_data_tuple)}
+        {repr(llama_lib_data_tuple)}  # <-- 决定性的修复！
     ],
+    # hiddenimports: 强制包含 PyInstaller 可能找不到的库
     hiddenimports=[
         'uvicorn.lifespan.on',
         'uvicorn.loops.auto',
@@ -73,7 +76,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,
+    console=False, # 对应 --windowed
     icon=None
 )
 
@@ -92,8 +95,9 @@ coll = COLLECT(
     # 6. 将生成的内容写入 build.spec 文件
     with open('build.spec', 'w', encoding='utf-8') as f:
         f.write(spec_content)
-    print("build.spec file created successfully.")
+    print("build.spec file created successfully, including path to llama_cpp/lib.")
 
 except Exception as e:
     print(f"Error creating .spec file: {e}")
     sys.exit(1)
+
